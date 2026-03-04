@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MoA 문서 변환기</title>
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+
+<!-- ─── Header ─────────────────────────────────────── -->
+<header class="app-header">
+  <div class="header-left">
+    <h1 class="app-title">MoA 문서 변환기</h1>
+    <span class="app-subtitle">PDF · DOCX · HWPX · XLSX · PPTX → HTML / Markdown</span>
+  </div>
+  <div class="header-right">
+    <span id="status-badge" class="status-badge disconnected">연결 중...</span>
+  </div>
+</header>
+
+<!-- ─── Main Layout ────────────────────────────────── -->
+<div class="main-layout">
+
+  <!-- Left Panel -->
+  <aside class="left-panel">
+    <!-- Tabs -->
+    <div class="tabs">
+      <button id="tab-convert" class="tab-btn active" onclick="">변환</button>
+      <button id="tab-settings" class="tab-btn" onclick="">설정</button>
+    </div>
+
+    <!-- Convert Tab -->
+    <div id="content-convert" class="tab-content" style="display:block">
+
+      <!-- Mode Switch -->
+      <div class="mode-switch">
+        <button class="mode-btn active" data-mode="single">단일 파일</button>
+        <button class="mode-btn" data-mode="batch">폴더 일괄</button>
+      </div>
+
+      <!-- Single File Mode -->
+      <div id="single-mode">
+        <div class="section-label">파일 선택</div>
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-icon">&#x1F4C2;</div>
+          <div class="drop-text">파일을 여기에 드래그하거나</div>
+          <button id="btn-select-file" class="btn btn-outline">파일 선택</button>
+          <div class="drop-formats">PDF, DOCX, HWPX, XLSX, PPTX</div>
+        </div>
+        <div id="file-info" class="file-info"></div>
+      </div>
+
+      <!-- Batch Mode -->
+      <div id="batch-mode" style="display:none">
+        <div class="section-label">폴더 선택</div>
+        <button id="btn-select-folder" class="btn btn-outline btn-full">폴더 선택</button>
+        <div id="folder-info" class="path-info"></div>
+      </div>
+
+      <!-- Output Directory -->
+      <div class="section-label">출력 디렉토리</div>
+      <button id="btn-select-output" class="btn btn-outline btn-full">출력 폴더 선택</button>
+      <div id="output-info" class="path-info"></div>
+
+      <!-- Format Selection -->
+      <div class="section-label">출력 형식</div>
+      <div class="format-options">
+        <label class="format-option">
+          <input type="checkbox" class="format-check" value="html" checked>
+          <span class="format-label">HTML</span>
+        </label>
+        <label class="format-option">
+          <input type="checkbox" class="format-check" value="markdown" checked>
+          <span class="format-label">Markdown</span>
+        </label>
+      </div>
+
+      <!-- Convert Button -->
+      <button id="btn-convert" class="btn btn-primary btn-full" disabled>변환 시작</button>
+
+      <!-- Progress -->
+      <div id="progress-section" style="display:none">
+        <div class="progress-container">
+          <div id="progress-bar" class="progress-bar" data-percent="0%"></div>
+        </div>
+        <div id="progress-message" class="progress-message"></div>
+      </div>
+
+      <!-- Status -->
+      <div id="status-message" class="status-message" style="display:none"></div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div id="content-settings" class="tab-content" style="display:none">
+      <div class="section-label">파이프라인 설정 (PDF)</div>
+
+      <div class="setting-group">
+        <label>작업 스레드</label>
+        <input type="number" id="set-workers" value="4" min="1" max="16" class="setting-input">
+      </div>
+
+      <div class="setting-group">
+        <label>DPI</label>
+        <select id="set-dpi" class="setting-input">
+          <option value="150">150 (빠름)</option>
+          <option value="200">200</option>
+          <option value="300" selected>300 (기본)</option>
+          <option value="400">400 (고품질)</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label>OCR 언어</label>
+        <select id="set-ocr-lang" class="setting-input">
+          <option value="ko,en" selected>한국어 + 영어</option>
+          <option value="ko,en,zh">한국어 + 영어 + 중국어</option>
+          <option value="en">영어만</option>
+          <option value="ko">한국어만</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label>읽기 순서</label>
+        <select id="set-reading-order" class="setting-input">
+          <option value="hybrid" selected>하이브리드 (규칙+AI)</option>
+          <option value="rule">규칙 기반</option>
+          <option value="vlm">VLM (AI)</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label>제목 분류</label>
+        <select id="set-heading" class="setting-input">
+          <option value="hybrid" selected>하이브리드</option>
+          <option value="rule">규칙 기반</option>
+          <option value="llm">LLM</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label>오류 수정</label>
+        <select id="set-correction" class="setting-input">
+          <option value="hybrid" selected>하이브리드</option>
+          <option value="dictionary">사전만</option>
+          <option value="llm">LLM</option>
+          <option value="off">끔</option>
+        </select>
+      </div>
+
+      <div class="section-label" style="margin-top:20px">도구</div>
+      <button id="btn-restart-backend" class="btn btn-outline btn-full">백엔드 재시작</button>
+      <button id="btn-open-editor" class="btn btn-outline btn-full" style="margin-top:8px">HTML 에디터</button>
+    </div>
+  </aside>
+
+  <!-- Right Panel -->
+  <main class="right-panel">
+    <!-- Welcome / Results -->
+    <div id="welcome-section" class="welcome">
+      <div class="welcome-icon">&#x1F4C4;</div>
+      <h2>MoA 문서 변환기</h2>
+      <p>PDF, Word, 한글, Excel, PowerPoint 문서를<br>HTML과 Markdown으로 변환합니다.</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">&#x1F916;</div>
+          <div class="feature-title">AI 레이아웃 분석</div>
+          <div class="feature-desc">PDF의 복잡한 레이아웃을 정확하게 분석</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">&#x1F4DD;</div>
+          <div class="feature-title">다중 문서 지원</div>
+          <div class="feature-desc">DOCX, HWPX, XLSX, PPTX 네이티브 변환</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">&#x1F50D;</div>
+          <div class="feature-title">OCR 한국어</div>
+          <div class="feature-desc">이미지 PDF의 한국어 텍스트 인식</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">&#x1F517;</div>
+          <div class="feature-title">MoA 연동</div>
+          <div class="feature-desc">MoA 게이트웨이 AI 도구로 사용 가능</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results-section" style="display:none">
+      <div class="results-header">
+        <h3>변환 결과</h3>
+        <div class="results-actions">
+          <button id="btn-open-folder" class="btn btn-sm">폴더 열기</button>
+        </div>
+      </div>
+      <div id="result-files" class="result-files"></div>
+    </div>
+  </main>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
