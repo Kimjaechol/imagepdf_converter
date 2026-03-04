@@ -1,0 +1,14 @@
+# GPU/AI dependencies (install separately after requirements.txt)
+#
+# For CPU-only (lighter, recommended for most users):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#
+# For NVIDIA GPU:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# After torch is installed:
+#   pip install surya-ocr
+#   pip install table-transformer
+#
+# Korean NLP (requires Java Runtime):
+#   pip install konlpy
