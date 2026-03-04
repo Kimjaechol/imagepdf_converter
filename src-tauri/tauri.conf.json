@@ -37,7 +37,8 @@
     "resources": [
       "../backend/**/*.py",
       "../backend/**/*.txt",
-      "../config/**/*"
+      "../config/**/*",
+      "../build_output/portable_python/**/*"
     ],
     "windows": {
       "nsis": {
