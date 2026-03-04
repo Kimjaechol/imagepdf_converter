@@ -29,14 +29,21 @@ fn find_python(app: &AppHandle) -> PathBuf {
 
     let python_bin = if cfg!(windows) { "python.exe" } else { "bin/python3" };
 
-    // 1. Bundled portable Python (packaged app)
+    // 1. Bundled portable Python (packaged app - direct path)
     let bundled = resource_dir.join("portable_python").join(python_bin);
     if bundled.exists() {
         tracing::info!("Using bundled Python: {:?}", bundled);
         return bundled;
     }
 
-    // 2. Portable Python in build_output (dev mode)
+    // 2. Bundled portable Python (packaged app - under build_output/)
+    let bundled_bo = resource_dir.join("build_output").join("portable_python").join(python_bin);
+    if bundled_bo.exists() {
+        tracing::info!("Using bundled Python: {:?}", bundled_bo);
+        return bundled_bo;
+    }
+
+    // 3. Portable Python in build_output (dev mode)
     let dev_portable = resource_dir
         .join("..")
         .join("build_output")
