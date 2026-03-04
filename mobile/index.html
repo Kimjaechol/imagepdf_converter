@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>PDF 변환기</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0f0f1a;
+      --surface: #1a1a2e;
+      --primary: #e94560;
+      --primary-light: #f06292;
+      --text: #f0f0f0;
+      --text-muted: #8888aa;
+      --success: #4caf50;
+      --border: #2a2a4a;
+      --radius: 12px;
+      --safe-top: env(safe-area-inset-top);
+      --safe-bottom: env(safe-area-inset-bottom);
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bottom);
+    }
+
+    .app-header {
+      background: var(--surface);
+      padding: 16px 20px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .app-header h1 { font-size: 18px; font-weight: 700; }
+    .app-header h1 span { color: var(--primary); }
+
+    .content { padding: 20px; }
+
+    .server-input {
+      margin-bottom: 20px;
+    }
+    .server-input label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+    .server-input input {
+      width: 100%; padding: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-size: 14px;
+    }
+    .server-input .hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+    .action-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px 20px;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    .action-card .icon { font-size: 48px; margin-bottom: 12px; }
+    .action-card h3 { font-size: 16px; margin-bottom: 8px; }
+    .action-card p { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+    .action-card input[type="file"] { display: none; }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      background: var(--primary);
+      border: none; border-radius: var(--radius);
+      color: white; font-size: 14px; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+    .btn:disabled { opacity: 0.4; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .format-row {
+      display: flex; gap: 12px; margin-bottom: 16px; justify-content: center;
+    }
+    .format-chip {
+      padding: 8px 20px;
+      border: 1px solid var(--border);
+      border-radius: 20px; font-size: 13px;
+      cursor: pointer; background: var(--surface);
+      color: var(--text-muted);
+    }
+    .format-chip.active { border-color: var(--primary); color: var(--primary-light); background: rgba(233,69,96,0.1); }
+
+    .status-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-top: 16px;
+      display: none;
+    }
+    .status-bar.show { display: block; }
+    .status-bar h4 { font-size: 14px; margin-bottom: 8px; }
+    .progress { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-bottom: 8px; }
+    .progress-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.3s; }
+    .status-msg { font-size: 12px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="app-header">
+    <h1><span>PDF</span> 변환기</h1>
+  </div>
+
+  <div class="content">
+    <div class="server-input">
+      <label>백엔드 서버 주소</label>
+      <input type="text" id="serverUrl" value="http://192.168.0.100:8765" placeholder="http://IP:8765">
+      <div class="hint">PC에서 실행 중인 백엔드 서버의 IP 주소를 입력하세요</div>
+    </div>
+
+    <div class="action-card">
+      <div class="icon">📄</div>
+      <h3>PDF 파일 변환</h3>
+      <p>PDF 파일을 선택하여 HTML 또는 Markdown으로 변환합니다</p>
+      <div class="format-row">
+        <div class="format-chip active" id="chipHtml" onclick="toggleChip('html')">HTML</div>
+        <div class="format-chip active" id="chipMd" onclick="toggleChip('md')">Markdown</div>
+      </div>
+      <input type="file" id="fileInput" accept=".pdf" onchange="onFileSelected(event)">
+      <button class="btn" onclick="document.getElementById('fileInput').click()">파일 선택 및 변환</button>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+      <h4 id="statusTitle">변환 중...</h4>
+      <div class="progress"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+      <div class="status-msg" id="statusMsg">대기 중...</div>
+    </div>
+
+    <div class="action-card" id="resultCard" style="display:none">
+      <div class="icon">✅</div>
+      <h3>변환 완료!</h3>
+      <p id="resultMsg">결과 파일이 준비되었습니다</p>
+    </div>
+  </div>
+
+  <script>
+    let formats = { html: true, md: true };
+
+    function toggleChip(fmt) {
+      formats[fmt] = !formats[fmt];
+      document.getElementById(fmt === 'html' ? 'chipHtml' : 'chipMd').classList.toggle('active', formats[fmt]);
+    }
+
+    async function onFileSelected(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const serverUrl = document.getElementById('serverUrl').value.trim();
+      const fmts = [];
+      if (formats.html) fmts.push('html');
+      if (formats.md) fmts.push('markdown');
+
+      if (!fmts.length) { alert('출력 형식을 선택하세요'); return; }
+
+      const statusBar = document.getElementById('statusBar');
+      statusBar.classList.add('show');
+      document.getElementById('statusTitle').textContent = `${file.name} 변환 중...`;
+      document.getElementById('statusMsg').textContent = '서버에 업로드 중...';
+      document.getElementById('progressFill').style.width = '10%';
+      document.getElementById('resultCard').style.display = 'none';
+
+      try {
+        // Note: For mobile, the file needs to be uploaded to the backend server
+        // The backend would need an upload endpoint for mobile use
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('output_formats', JSON.stringify(fmts));
+
+        const resp = await fetch(`${serverUrl}/api/convert/upload`, {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await resp.json();
+
+        // Poll for status
+        const jobId = data.job_id;
+        const poll = setInterval(async () => {
+          try {
+            const r = await fetch(`${serverUrl}/api/jobs/${jobId}`);
+            const d = await r.json();
+            const pct = Math.round(d.progress * 100);
+            document.getElementById('progressFill').style.width = `${pct}%`;
+            document.getElementById('statusMsg').textContent = `${pct}% - ${d.message}`;
+            if (d.status === 'completed') {
+              clearInterval(poll);
+              statusBar.classList.remove('show');
+              document.getElementById('resultCard').style.display = 'block';
+              document.getElementById('resultMsg').textContent = `${file.name} 변환이 완료되었습니다`;
+            } else if (d.status === 'error') {
+              clearInterval(poll);
+              document.getElementById('statusMsg').textContent = `오류: ${d.message}`;
+            }
+          } catch {}
+        }, 1000);
+      } catch (err) {
+        document.getElementById('statusMsg').textContent = `오류: ${err.message}`;
+      }
+    }
+  </script>
+</body>
+</html>

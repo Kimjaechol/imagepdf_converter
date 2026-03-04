@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "description": "한국어 OCR 오류 교정 사전 - 갑을병정 한자, 로마자, 법률용어 등",
+    "last_updated": "2026-03-04"
+  },
+  "hanja_corrections": {
+    "甲": {
+      "confused_with": ["申", "由", "田"],
+      "context": "갑을병정, 계약서"
+    },
+    "乙": {
+      "confused_with": ["2", "Z", "乃"],
+      "context": "갑을병정, 계약서"
+    },
+    "丙": {
+      "confused_with": ["内", "丹"],
+      "context": "갑을병정, 계약서"
+    },
+    "丁": {
+      "confused_with": ["丅", "下", "了"],
+      "context": "갑을병정, 계약서"
+    },
+    "戊": {
+      "confused_with": ["成", "戌", "戍"],
+      "context": "갑을병정"
+    },
+    "己": {
+      "confused_with": ["已", "巳", "口"],
+      "context": "갑을병정"
+    },
+    "庚": {
+      "confused_with": ["康", "庸"],
+      "context": "갑을병정"
+    },
+    "辛": {
+      "confused_with": ["幸", "辜"],
+      "context": "갑을병정"
+    },
+    "壬": {
+      "confused_with": ["任", "王"],
+      "context": "갑을병정"
+    },
+    "癸": {
+      "confused_with": ["発", "突"],
+      "context": "갑을병정"
+    }
+  },
+  "roman_numeral_corrections": {
+    "Ⅰ": {
+      "confused_with": ["I", "l", "1", "|", "ⅰ"],
+      "context_patterns": ["제{n}장", "제{n}편", "제{n}절"]
+    },
+    "Ⅱ": {
+      "confused_with": ["II", "ll", "11", "||"],
+      "context_patterns": ["제{n}장", "제{n}편"]
+    },
+    "Ⅲ": {
+      "confused_with": ["III", "lll", "111"],
+      "context_patterns": ["제{n}장", "제{n}편"]
+    },
+    "Ⅳ": {
+      "confused_with": ["IV", "lV", "1V"],
+      "context_patterns": ["제{n}장", "제{n}편"]
+    },
+    "Ⅴ": {
+      "confused_with": ["V", "v", "5"],
+      "context_patterns": ["제{n}장", "제{n}편"]
+    }
+  },
+  "korean_numbering": {
+    "(가)": {"confused_with": ["(7)", "(거)", "(기)"]},
+    "(나)": {"confused_with": ["(4)", "(너)", "(니)"]},
+    "(다)": {"confused_with": ["(5)", "(더)", "(디)"]},
+    "(라)": {"confused_with": ["(6)", "(러)", "(리)"]},
+    "(마)": {"confused_with": ["(8)", "(머)", "(미)"]},
+    "(바)": {"confused_with": ["(9)", "(버)", "(비)"]},
+    "(사)": {"confused_with": ["(시)", "(서)"]},
+    "(아)": {"confused_with": ["(어)", "(이)"]},
+    "(자)": {"confused_with": ["(저)", "(지)"]},
+    "(차)": {"confused_with": ["(처)", "(치)"]},
+    "(카)": {"confused_with": ["(커)", "(키)"]},
+    "(타)": {"confused_with": ["(터)", "(티)"]},
+    "(파)": {"confused_with": ["(퍼)", "(피)"]},
+    "(하)": {"confused_with": ["(허)", "(히)"]}
+  },
+  "legal_terms": {
+    "채무자": {"confused_with": ["채무차", "재무자"]},
+    "채권자": {"confused_with": ["채권차", "재권자"]},
+    "배당표": {"confused_with": ["배당요", "배당포"]},
+    "원고": {"confused_with": ["원거", "원교"]},
+    "피고": {"confused_with": ["피거", "피교"]},
+    "소송": {"confused_with": ["소숭", "소종"]},
+    "판결": {"confused_with": ["판겸", "반결"]},
+    "계약": {"confused_with": ["계역", "게약"]},
+    "조항": {"confused_with": ["조한", "조향"]},
+    "법률": {"confused_with": ["법율", "법을"]},
+    "시행령": {"confused_with": ["시행영", "시행녕"]},
+    "대통령": {"confused_with": ["대통영", "대통녕"]},
+    "국회": {"confused_with": ["국희", "국회"]},
+    "헌법": {"confused_with": ["현법", "한법"]},
+    "민법": {"confused_with": ["민봅", "민번"]},
+    "형법": {"confused_with": ["형봅", "형번"]},
+    "상법": {"confused_with": ["상봅", "상번"]}
+  },
+  "exam_terms": {
+    "정답": {"confused_with": ["정달", "정당"]},
+    "오답": {"confused_with": ["오달", "오당"]},
+    "배점": {"confused_with": ["배접", "배짐"]},
+    "수험번호": {"confused_with": ["수험빈호", "수험번효"]}
+  },
+  "common_ocr_errors": {
+    "의": {"confused_with": ["외", "와", "위"]},
+    "를": {"confused_with": ["릎", "롤"]},
+    "은": {"confused_with": ["운", "온"]},
+    "이": {"confused_with": ["01", "ol", "0l"]},
+    "에": {"confused_with": ["예", "애"]},
+    "으로": {"confused_with": ["오로", "우로"]},
+    "하는": {"confused_with": ["하느", "하눈"]},
+    "있다": {"confused_with": ["잇다", "있따"]}
+  },
+  "symbol_corrections": {
+    "§": {"confused_with": ["S", "s", "5"]},
+    "①": {"confused_with": ["(1)", "O1"]},
+    "②": {"confused_with": ["(2)", "O2"]},
+    "③": {"confused_with": ["(3)", "O3"]},
+    "④": {"confused_with": ["(4)", "O4"]},
+    "⑤": {"confused_with": ["(5)", "O5"]},
+    "※": {"confused_with": ["*", "X"]},
+    "→": {"confused_with": ["-)", "->", "一>"]},
+    "·": {"confused_with": [".", "。", ","]}
+  },
+  "user_custom": {}
+}

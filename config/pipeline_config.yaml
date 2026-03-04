@@ -1,0 +1,78 @@
+# Pipeline Configuration
+pipeline:
+  pages_per_chunk: 10
+  max_workers: 4
+  dpi: 300
+  output_formats:
+    - html
+    - markdown
+
+# Layout Analysis
+layout:
+  engine: surya  # surya | layoutparser | hybrid
+  confidence_threshold: 0.5
+  detect_tables: true
+  detect_figures: true
+  detect_equations: true
+  detect_columns: true
+
+# OCR Configuration
+ocr:
+  engine: surya  # surya | tesseract | hybrid
+  languages:
+    - ko
+    - en
+    - zh
+  tesseract_config: "--oem 3 --psm 6"
+
+# Table Structure Recognition
+table:
+  engine: table_transformer  # table_transformer | surya
+  merge_multipage: true
+  header_similarity_threshold: 0.85
+
+# Reading Order
+reading_order:
+  mode: hybrid  # rule_based | vlm | hybrid
+  vlm_provider: gemini  # gemini | ollama
+  gemini_model: gemini-2.5-flash
+  ollama_model: qwen2.5:7b
+
+# Heading Classification
+heading:
+  mode: hybrid  # rule_based | llm | hybrid
+  llm_provider: ollama  # ollama | gemini
+  ollama_model: qwen2.5:0.5b-instruct
+
+# Language Correction
+correction:
+  enable: true
+  mode: hybrid  # dictionary | llm | hybrid
+  llm_provider: gemini  # gemini | ollama
+  gemini_model: gemini-2.5-flash
+  ollama_model: qwen2.5:1.5b
+  dictionary_path: config/correction_dict.json
+  aggressiveness: conservative  # conservative | moderate | aggressive
+
+# Output Settings
+output:
+  html:
+    simplified: true
+    inline_css: true
+    preserve_font_size_ratio: true
+  markdown:
+    table_format: pipe  # pipe | html_fallback
+    footnote_style: reference  # inline | reference
+    image_dir: images
+
+# Model Endpoints
+models:
+  ollama_base_url: "http://localhost:11434"
+  gemini_api_key_env: "GEMINI_API_KEY"
+
+# Performance
+performance:
+  gpu_enabled: false
+  batch_size: 4
+  cache_models: true
+  low_memory_mode: false
