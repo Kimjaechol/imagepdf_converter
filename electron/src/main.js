@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const http = require("http");
 
 let mainWindow;
@@ -10,39 +10,114 @@ const BACKEND_PORT = 8765;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 // -------------------------------------------------------------------
+// Find Python - bundled portable or system-installed
+// -------------------------------------------------------------------
+
+function findPython() {
+  // 1. Bundled portable Python (packaged app)
+  if (app.isPackaged) {
+    const bundledPython = path.join(
+      process.resourcesPath,
+      "portable_python",
+      "python.exe"
+    );
+    if (fs.existsSync(bundledPython)) {
+      console.log("Using bundled Python:", bundledPython);
+      return bundledPython;
+    }
+  }
+
+  // 2. Portable Python next to the app (development or manual setup)
+  const devPortable = path.join(__dirname, "..", "..", "build_output", "portable_python", "python.exe");
+  if (fs.existsSync(devPortable)) {
+    console.log("Using dev portable Python:", devPortable);
+    return devPortable;
+  }
+
+  // 3. System Python
+  const systemCmd = process.platform === "win32" ? "python" : "python3";
+  try {
+    execSync(`${systemCmd} --version`, { stdio: "pipe" });
+    console.log("Using system Python:", systemCmd);
+    return systemCmd;
+  } catch {
+    // 4. Last resort on Windows - try common install paths
+    if (process.platform === "win32") {
+      const commonPaths = [
+        path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "python.exe"),
+        path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "python.exe"),
+        path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "python.exe"),
+        "C:\\Python312\\python.exe",
+        "C:\\Python311\\python.exe",
+      ];
+      for (const p of commonPaths) {
+        if (fs.existsSync(p)) {
+          console.log("Found Python at:", p);
+          return p;
+        }
+      }
+    }
+  }
+
+  console.error("Python not found!");
+  return systemCmd; // will fail gracefully
+}
+
+// -------------------------------------------------------------------
 // Backend lifecycle
 // -------------------------------------------------------------------
 
 function startBackend() {
-  const pythonCmd = process.platform === "win32" ? "python" : "python3";
-  const backendDir = app.isPackaged
-    ? path.join(process.resourcesPath, "backend")
-    : path.join(__dirname, "..", "..", "backend");
+  const pythonCmd = findPython();
 
-  backendProcess = spawn(pythonCmd, ["-m", "uvicorn", "backend.server:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT)], {
-    cwd: path.join(backendDir, ".."),
-    env: {
-      ...process.env,
-      PIPELINE_CONFIG: path.join(
-        app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", ".."),
-        "config",
-        "pipeline_config.yaml"
-      ),
-      PORT: String(BACKEND_PORT),
-    },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const backendDir = app.isPackaged
+    ? path.join(process.resourcesPath, "app_backend")
+    : path.join(__dirname, "..", "..");
+
+  const configPath = app.isPackaged
+    ? path.join(process.resourcesPath, "app_backend", "config", "pipeline_config.yaml")
+    : path.join(__dirname, "..", "..", "config", "pipeline_config.yaml");
+
+  console.log("Starting backend from:", backendDir);
+  console.log("Config path:", configPath);
+
+  backendProcess = spawn(
+    pythonCmd,
+    ["-m", "uvicorn", "backend.server:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT)],
+    {
+      cwd: backendDir,
+      env: {
+        ...process.env,
+        PIPELINE_CONFIG: configPath,
+        PORT: String(BACKEND_PORT),
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    }
+  );
 
   backendProcess.stdout.on("data", (data) => {
-    console.log(`[backend] ${data.toString().trim()}`);
+    const msg = data.toString().trim();
+    console.log(`[backend] ${msg}`);
+    // Notify renderer of backend logs
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("backend-log", msg);
+    }
   });
 
   backendProcess.stderr.on("data", (data) => {
-    console.error(`[backend] ${data.toString().trim()}`);
+    const msg = data.toString().trim();
+    console.error(`[backend] ${msg}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("backend-log", msg);
+    }
   });
 
   backendProcess.on("error", (err) => {
     console.error("Failed to start backend:", err);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("backend-error", err.message);
+    }
   });
 
   backendProcess.on("exit", (code) => {
@@ -53,12 +128,21 @@ function startBackend() {
 
 function stopBackend() {
   if (backendProcess) {
-    backendProcess.kill();
+    if (process.platform === "win32") {
+      // On Windows, kill the process tree
+      try {
+        execSync(`taskkill /pid ${backendProcess.pid} /T /F`, { stdio: "pipe" });
+      } catch {
+        backendProcess.kill();
+      }
+    } else {
+      backendProcess.kill();
+    }
     backendProcess = null;
   }
 }
 
-function waitForBackend(maxRetries = 30) {
+function waitForBackend(maxRetries = 60) {
   return new Promise((resolve, reject) => {
     let retries = 0;
     const check = () => {
@@ -101,7 +185,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    title: "PDF → HTML/Markdown Converter",
+    title: "PDF 변환기",
+    icon: path.join(__dirname, "..", "public", "icon.png"),
   });
 
   mainWindow.loadFile(path.join(__dirname, "..", "public", "index.html"));
@@ -212,6 +297,7 @@ ipcMain.handle("save-file-dialog", async (_event, defaultName, filters) => {
 // -------------------------------------------------------------------
 
 app.whenReady().then(async () => {
+  createWindow();
   startBackend();
   try {
     await waitForBackend();
@@ -219,7 +305,6 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error("Backend startup failed:", err);
   }
-  createWindow();
 });
 
 app.on("window-all-closed", () => {
