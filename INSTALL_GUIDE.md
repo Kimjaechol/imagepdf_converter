@@ -90,7 +90,7 @@ cd imagepdf_converter
 cd imagepdf_converter
 
 # 가상환경 생성 (권장)
-python3 -m venv venv
+python -m venv venv
 
 # 가상환경 활성화
 # Windows:
