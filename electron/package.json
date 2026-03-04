@@ -7,13 +7,17 @@
     "start": "electron .",
     "dev": "NODE_ENV=development electron .",
     "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux"
+    "build:win": "electron-builder --win --x64",
+    "build:win32": "electron-builder --win --ia32",
+    "build:mac": "electron-builder --mac --x64",
+    "build:mac-arm": "electron-builder --mac --arm64",
+    "build:linux": "electron-builder --linux --x64",
+    "build:linux-arm": "electron-builder --linux --arm64",
+    "build:all": "electron-builder -mwl"
   },
   "build": {
     "appId": "com.pdfconverter.app",
-    "productName": "PDF Converter",
+    "productName": "PDF 변환기",
     "files": [
       "src/**/*",
       "public/**/*"
@@ -22,7 +26,7 @@
       {
         "from": "../backend",
         "to": "backend",
-        "filter": ["**/*.py", "requirements.txt"]
+        "filter": ["**/*.py", "**/*.json", "**/*.yaml", "**/*.yml", "requirements.txt"]
       },
       {
         "from": "../config",
@@ -30,16 +34,36 @@
       }
     ],
     "win": {
-      "target": "nsis",
-      "icon": "public/icon.png"
+      "target": [
+        { "target": "nsis", "arch": ["x64", "ia32"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "public/icon.png",
+      "artifactName": "PDF-Converter-${version}-Windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": ["ko", "en"],
+      "language": "1042"
     },
     "mac": {
-      "target": "dmg",
-      "icon": "public/icon.png"
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "public/icon.png",
+      "category": "public.app-category.productivity",
+      "artifactName": "PDF-Converter-${version}-macOS-${arch}.${ext}"
     },
     "linux": {
-      "target": "AppImage",
-      "icon": "public/icon.png"
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb", "arch": ["x64"] },
+        { "target": "rpm", "arch": ["x64"] }
+      ],
+      "icon": "public/icon.png",
+      "category": "Office",
+      "artifactName": "PDF-Converter-${version}-Linux-${arch}.${ext}"
     }
   },
   "dependencies": {

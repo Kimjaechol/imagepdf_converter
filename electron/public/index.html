@@ -4,552 +4,873 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
-  <title>PDF → HTML/Markdown Converter</title>
+  <title>PDF 변환기 - HTML/Markdown</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
-      --bg: #1a1a2e;
-      --surface: #16213e;
-      --surface2: #0f3460;
+      --bg: #0f0f1a;
+      --surface: #1a1a2e;
+      --surface2: #16213e;
+      --surface3: #0f3460;
       --primary: #e94560;
       --primary-light: #f06292;
-      --text: #eee;
-      --text-muted: #999;
+      --primary-dark: #c62828;
+      --accent: #533483;
+      --text: #f0f0f0;
+      --text-muted: #8888aa;
+      --text-dim: #555577;
       --success: #4caf50;
+      --success-light: #81c784;
       --warning: #ff9800;
+      --error: #ef5350;
+      --info: #42a5f5;
       --border: #2a2a4a;
-      --radius: 8px;
+      --border-light: #3a3a5a;
+      --radius: 10px;
+      --radius-lg: 16px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.3);
+      --transition: all 0.25s ease;
     }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
+      overflow: hidden;
     }
 
-    /* Header */
+    /* ========== HEADER ========== */
     .header {
-      background: var(--surface);
+      background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
       border-bottom: 1px solid var(--border);
-      padding: 16px 24px;
+      padding: 12px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       -webkit-app-region: drag;
+      user-select: none;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 800;
+      color: white;
+      letter-spacing: -1px;
     }
     .header h1 {
-      font-size: 20px;
-      font-weight: 600;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
     }
-    .header h1 span { color: var(--primary); }
-    .header-status {
-      font-size: 13px;
-      color: var(--text-muted);
+    .header h1 .highlight { color: var(--primary); }
+    .header-right {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 16px;
       -webkit-app-region: no-drag;
     }
-    .status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--warning);
-    }
-    .status-dot.connected { background: var(--success); }
-
-    /* Main layout */
-    .main {
-      display: grid;
-      grid-template-columns: 300px 1fr;
-      height: calc(100vh - 57px);
-    }
-
-    /* Sidebar */
-    .sidebar {
-      background: var(--surface);
-      border-right: 1px solid var(--border);
-      padding: 20px;
-      overflow-y: auto;
-    }
-    .sidebar h2 {
-      font-size: 14px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 16px;
-    }
-
-    /* Buttons */
-    .btn {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      padding: 12px 16px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: var(--surface2);
-      color: var(--text);
-      cursor: pointer;
-      font-size: 14px;
-      margin-bottom: 10px;
-      transition: all 0.2s;
-    }
-    .btn:hover { border-color: var(--primary); background: rgba(233, 69, 96, 0.1); }
-    .btn.primary {
-      background: var(--primary);
-      border-color: var(--primary);
-      font-weight: 600;
-    }
-    .btn.primary:hover { background: var(--primary-light); }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* Input groups */
-    .input-group {
-      margin-bottom: 16px;
-    }
-    .input-group label {
-      display: block;
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-    }
-    .input-group .path-display {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 8px 12px;
-      font-size: 13px;
-      color: var(--text);
-      word-break: break-all;
-      min-height: 36px;
-    }
-    .input-group select, .input-group input {
-      width: 100%;
-      padding: 8px 12px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      color: var(--text);
-      font-size: 13px;
-    }
-
-    /* Checkboxes */
-    .checkbox-group {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 12px;
-    }
-    .checkbox-group label {
+    .status-badge {
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 13px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(255,152,0,0.15);
+      color: var(--warning);
+      border: 1px solid rgba(255,152,0,0.2);
+    }
+    .status-badge.connected {
+      background: rgba(76,175,80,0.15);
+      color: var(--success-light);
+      border-color: rgba(76,175,80,0.2);
+    }
+    .status-badge .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .help-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 5px 12px;
+      border-radius: 20px;
       cursor: pointer;
+      font-size: 12px;
+      -webkit-app-region: no-drag;
+      transition: var(--transition);
+    }
+    .help-btn:hover {
+      border-color: var(--primary);
+      color: var(--primary-light);
     }
 
-    /* Content area */
-    .content {
-      padding: 24px;
-      overflow-y: auto;
+    /* ========== MAIN LAYOUT ========== */
+    .app-body {
+      display: flex;
+      height: calc(100vh - 57px);
     }
 
-    /* Job cards */
-    .jobs-container {
+    /* ========== LEFT PANEL ========== */
+    .left-panel {
+      width: 360px;
+      min-width: 360px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      overflow: hidden;
     }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab {
+      flex: 1;
+      padding: 12px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: var(--transition);
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    /* Tab content */
+    .tab-content { display: none; flex: 1; overflow-y: auto; padding: 20px; }
+    .tab-content.active { display: block; }
+
+    /* Step indicator */
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 24px;
+    }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-num {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      background: var(--surface3);
+      color: var(--text-muted);
+      border: 2px solid var(--border);
+      transition: var(--transition);
+    }
+    .step.done .step-num { background: var(--success); border-color: var(--success); color: white; }
+    .step.active .step-num { background: var(--primary); border-color: var(--primary); color: white; }
+    .step-label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+    .step.active .step-label { color: var(--text); }
+    .step.done .step-label { color: var(--success-light); }
+    .step-line { flex: 1; height: 2px; background: var(--border); margin: 0 6px; }
+    .step-line.done { background: var(--success); }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed var(--border-light);
+      border-radius: var(--radius-lg);
+      padding: 36px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: var(--transition);
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--primary);
+      background: rgba(233, 69, 96, 0.06);
+    }
+    .drop-zone.has-file {
+      border-color: var(--success);
+      background: rgba(76, 175, 80, 0.06);
+      border-style: solid;
+    }
+    .drop-zone-icon { font-size: 40px; margin-bottom: 12px; }
+    .drop-zone h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .drop-zone p { font-size: 12px; color: var(--text-muted); }
+    .drop-zone .file-info {
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: var(--surface3);
+      border-radius: var(--radius);
+      font-size: 13px;
+      word-break: break-all;
+      text-align: left;
+    }
+    .drop-zone .clear-btn {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(239,83,80,0.2);
+      border: none; color: var(--error);
+      width: 24px; height: 24px;
+      border-radius: 50%; cursor: pointer; font-size: 14px;
+      display: none;
+    }
+    .drop-zone.has-file .clear-btn { display: block; }
+
+    /* Mode switch */
+    .mode-switch { display: flex; gap: 8px; margin-bottom: 16px; }
+    .mode-btn {
+      flex: 1; padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--text-muted);
+      cursor: pointer; font-size: 13px; font-weight: 500;
+      text-align: center; transition: var(--transition);
+    }
+    .mode-btn:hover { border-color: var(--primary); color: var(--text); }
+    .mode-btn.active { background: rgba(233,69,96,0.12); border-color: var(--primary); color: var(--primary-light); }
+
+    /* Section */
+    .section { margin-bottom: 20px; }
+    .section-title {
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px;
+    }
+
+    /* Output dir */
+    .output-selector { display: flex; gap: 8px; align-items: center; }
+    .output-path {
+      flex: 1; padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 12px; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      min-height: 38px; line-height: 18px;
+    }
+    .output-path.empty { color: var(--text-dim); font-style: italic; }
+    .browse-btn {
+      padding: 10px 14px;
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text); cursor: pointer; font-size: 13px;
+      white-space: nowrap; transition: var(--transition);
+    }
+    .browse-btn:hover { border-color: var(--primary); }
+
+    /* Format checkboxes */
+    .format-options { display: flex; gap: 12px; }
+    .format-opt {
+      flex: 1; padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg); cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      transition: var(--transition);
+    }
+    .format-opt:hover { border-color: var(--primary); }
+    .format-opt.checked { border-color: var(--primary); background: rgba(233,69,96,0.08); }
+    .format-opt input { display: none; }
+    .format-check {
+      width: 18px; height: 18px;
+      border: 2px solid var(--border-light);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      transition: var(--transition); font-size: 12px;
+    }
+    .format-opt.checked .format-check { background: var(--primary); border-color: var(--primary); }
+    .format-label { font-size: 13px; font-weight: 500; }
+
+    /* Start button */
+    .start-btn {
+      width: 100%; padding: 14px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      border: none; border-radius: var(--radius);
+      color: white; font-size: 15px; font-weight: 700;
+      cursor: pointer; transition: var(--transition);
+      margin-top: 8px; letter-spacing: 0.5px;
+    }
+    .start-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(233,69,96,0.3);
+    }
+    .start-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ---- Settings Tab ---- */
+    .setting-group { margin-bottom: 18px; }
+    .setting-group label {
+      display: block; font-size: 12px; color: var(--text-muted);
+      margin-bottom: 6px; font-weight: 600;
+    }
+    .setting-group select,
+    .setting-group input {
+      width: 100%; padding: 9px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text); font-size: 13px;
+    }
+    .setting-group .hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+    /* ========== RIGHT PANEL ========== */
+    .right-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .right-tabs {
+      display: flex; border-bottom: 1px solid var(--border);
+      padding: 0 20px; background: var(--surface); flex-shrink: 0;
+    }
+    .right-tab {
+      padding: 11px 16px; font-size: 13px; font-weight: 600;
+      color: var(--text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: var(--transition);
+    }
+    .right-tab:hover { color: var(--text); }
+    .right-tab.active { color: var(--primary-light); border-bottom-color: var(--primary); }
+    .right-tab .badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 18px; height: 18px; padding: 0 5px;
+      border-radius: 9px; background: var(--primary);
+      color: white; font-size: 11px; font-weight: 700; margin-left: 6px;
+    }
+    .right-content { flex: 1; overflow-y: auto; padding: 20px; }
+    .right-pane { display: none; }
+    .right-pane.active { display: block; }
+
+    /* Job cards */
+    .job-list { display: flex; flex-direction: column; gap: 12px; }
     .job-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
+      border-radius: var(--radius-lg);
+      padding: 18px 20px; transition: var(--transition);
     }
-    .job-card .job-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
+    .job-card:hover { border-color: var(--border-light); }
+    .jc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .jc-name { font-size: 14px; font-weight: 600; word-break: break-all; }
+    .jc-badge {
+      font-size: 11px; padding: 3px 10px; border-radius: 12px;
+      font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
     }
-    .job-card .job-title {
-      font-size: 16px;
-      font-weight: 600;
+    .jc-badge.pending { background: rgba(255,152,0,0.15); color: var(--warning); }
+    .jc-badge.processing { background: rgba(66,165,245,0.15); color: var(--info); }
+    .jc-badge.completed { background: rgba(76,175,80,0.15); color: var(--success-light); }
+    .jc-badge.error { background: rgba(239,83,80,0.15); color: var(--error); }
+    .jc-progress { height: 5px; background: var(--bg); border-radius: 3px; overflow: hidden; margin: 10px 0; }
+    .jc-progress-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+    .jc-progress-fill.pending { background: var(--warning); }
+    .jc-progress-fill.processing { background: linear-gradient(90deg, var(--info), #64b5f6); }
+    .jc-progress-fill.completed { background: var(--success); }
+    .jc-progress-fill.error { background: var(--error); }
+    .jc-detail { display: flex; justify-content: space-between; align-items: center; }
+    .jc-msg { font-size: 12px; color: var(--text-muted); }
+    .jc-pct { font-size: 13px; font-weight: 700; color: var(--text); }
+    .jc-actions { margin-top: 12px; display: flex; gap: 8px; }
+    .jc-actions button {
+      padding: 7px 14px; border: 1px solid var(--border);
+      border-radius: var(--radius); background: var(--surface3);
+      color: var(--text); cursor: pointer; font-size: 12px; font-weight: 500;
+      transition: var(--transition);
     }
-    .job-card .job-status {
-      font-size: 13px;
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-weight: 500;
-    }
-    .job-status.pending { background: rgba(255,152,0,0.2); color: var(--warning); }
-    .job-status.processing { background: rgba(33,150,243,0.2); color: #42a5f5; }
-    .job-status.completed { background: rgba(76,175,80,0.2); color: var(--success); }
-    .job-status.error { background: rgba(244,67,54,0.2); color: #ef5350; }
-
-    /* Progress bar */
-    .progress-bar {
-      height: 6px;
-      background: var(--bg);
-      border-radius: 3px;
-      overflow: hidden;
-      margin: 12px 0;
-    }
-    .progress-bar .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--primary), var(--primary-light));
-      border-radius: 3px;
-      transition: width 0.3s;
-    }
-    .job-message {
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-    .job-actions {
-      margin-top: 12px;
-      display: flex;
-      gap: 8px;
-    }
-    .job-actions .btn {
-      width: auto;
-      padding: 6px 14px;
-      font-size: 13px;
-    }
+    .jc-actions button:hover { border-color: var(--primary); background: rgba(233,69,96,0.1); }
 
     /* Empty state */
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
+    .empty-state { text-align: center; padding: 80px 30px; }
+    .empty-icon { font-size: 64px; margin-bottom: 20px; filter: grayscale(0.3); }
+    .empty-state h3 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+    .empty-state p { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+
+    /* Preview */
+    .preview-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .preview-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .preview-title { font-size: 13px; font-weight: 600; }
+    .preview-body {
+      padding: 16px; font-size: 13px; line-height: 1.7;
+      max-height: calc(100vh - 200px); overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
       color: var(--text-muted);
     }
-    .empty-state .icon {
-      font-size: 48px;
-      margin-bottom: 16px;
-    }
-    .empty-state h3 {
-      font-size: 18px;
-      margin-bottom: 8px;
-      color: var(--text);
-    }
 
-    /* Settings section */
-    .settings-section {
-      margin-top: 24px;
-      padding-top: 16px;
-      border-top: 1px solid var(--border);
+    /* Help modal */
+    .modal-overlay {
+      display: none; position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6); z-index: 100;
+      align-items: center; justify-content: center;
     }
-
-    /* Separator */
-    .sep {
-      height: 1px;
-      background: var(--border);
-      margin: 16px 0;
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 600px; max-height: 80vh; overflow-y: auto;
+      padding: 28px; box-shadow: var(--shadow);
+    }
+    .modal h2 { font-size: 18px; margin-bottom: 16px; }
+    .modal h3 { font-size: 14px; margin-top: 16px; margin-bottom: 8px; color: var(--primary-light); }
+    .modal p, .modal li { font-size: 13px; line-height: 1.8; color: var(--text-muted); }
+    .modal ol, .modal ul { padding-left: 20px; }
+    .modal code {
+      background: var(--bg); padding: 2px 6px; border-radius: 4px;
+      font-size: 12px; font-family: monospace; color: var(--primary-light);
+    }
+    .modal .close-modal {
+      float: right; background: none; border: none;
+      color: var(--text-muted); font-size: 20px; cursor: pointer;
     }
   </style>
 </head>
 <body>
-  <!-- Header -->
+  <!-- HEADER -->
   <div class="header">
-    <h1><span>PDF</span> → HTML / Markdown Converter</h1>
-    <div class="header-status">
-      <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">Connecting...</span>
+    <div class="header-left">
+      <div class="logo">P</div>
+      <h1><span class="highlight">PDF</span> 변환기</h1>
+    </div>
+    <div class="header-right">
+      <div class="status-badge" id="statusBadge">
+        <div class="dot"></div>
+        <span id="statusText">연결 중...</span>
+      </div>
+      <button class="help-btn" onclick="showHelp()">? 도움말</button>
     </div>
   </div>
 
-  <div class="main">
-    <!-- Sidebar -->
-    <div class="sidebar">
-      <h2>Convert</h2>
-
-      <!-- Single file -->
-      <button class="btn" id="btnSelectFile" onclick="selectFile()">
-        📄 Select PDF File
-      </button>
-      <div class="input-group" id="filePathGroup" style="display:none">
-        <label>Selected file</label>
-        <div class="path-display" id="filePath"></div>
+  <div class="app-body">
+    <!-- LEFT PANEL -->
+    <div class="left-panel">
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('convert')">변환</div>
+        <div class="tab" onclick="switchTab('settings')">설정</div>
       </div>
 
-      <div class="sep"></div>
-
-      <!-- Batch folder -->
-      <button class="btn" id="btnSelectFolder" onclick="selectFolder()">
-        📁 Select Folder (Batch)
-      </button>
-      <div class="input-group" id="folderPathGroup" style="display:none">
-        <label>Selected folder</label>
-        <div class="path-display" id="folderPath"></div>
-      </div>
-
-      <div class="sep"></div>
-
-      <!-- Output directory -->
-      <button class="btn" onclick="selectOutputDir()">
-        💾 Output Directory
-      </button>
-      <div class="input-group" id="outputDirGroup" style="display:none">
-        <label>Output to</label>
-        <div class="path-display" id="outputDir"></div>
-      </div>
-
-      <div class="sep"></div>
-
-      <!-- Output formats -->
-      <div class="input-group">
-        <label>Output Formats</label>
-        <div class="checkbox-group">
-          <label><input type="checkbox" id="fmtHtml" checked> HTML</label>
-          <label><input type="checkbox" id="fmtMd" checked> Markdown</label>
+      <!-- Convert Tab -->
+      <div class="tab-content active" id="tabConvert">
+        <div class="step-indicator">
+          <div class="step active" id="step1"><div class="step-num">1</div><div class="step-label">파일 선택</div></div>
+          <div class="step-line" id="stepLine1"></div>
+          <div class="step" id="step2"><div class="step-num">2</div><div class="step-label">저장 위치</div></div>
+          <div class="step-line" id="stepLine2"></div>
+          <div class="step" id="step3"><div class="step-num">3</div><div class="step-label">변환</div></div>
         </div>
+
+        <div class="section">
+          <div class="section-title">변환 모드</div>
+          <div class="mode-switch">
+            <div class="mode-btn active" id="modeSingle" onclick="setMode('single')">단일 파일</div>
+            <div class="mode-btn" id="modeBatch" onclick="setMode('batch')">폴더 일괄 변환</div>
+          </div>
+        </div>
+
+        <div class="drop-zone" id="dropZone" onclick="handleDropZoneClick()">
+          <button class="clear-btn" onclick="event.stopPropagation(); clearSelection()">x</button>
+          <div class="drop-zone-icon" id="dropIcon">📄</div>
+          <h3 id="dropTitle">PDF 파일을 여기로 드래그하세요</h3>
+          <p id="dropDesc">또는 클릭하여 파일을 선택하세요</p>
+          <div class="file-info" id="fileInfo" style="display:none"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">저장 위치</div>
+          <div class="output-selector">
+            <div class="output-path empty" id="outputPath">저장할 폴더를 선택하세요</div>
+            <button class="browse-btn" onclick="selectOutputDir()">찾아보기</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">출력 형식</div>
+          <div class="format-options">
+            <div class="format-opt checked" id="optHtml" onclick="toggleFormat('html')">
+              <input type="checkbox" id="fmtHtml" checked>
+              <div class="format-check">&#10003;</div>
+              <div class="format-label">HTML</div>
+            </div>
+            <div class="format-opt checked" id="optMd" onclick="toggleFormat('md')">
+              <input type="checkbox" id="fmtMd" checked>
+              <div class="format-check">&#10003;</div>
+              <div class="format-label">Markdown</div>
+            </div>
+          </div>
+        </div>
+
+        <button class="start-btn" id="startBtn" onclick="startConversion()" disabled>변환 시작</button>
       </div>
 
-      <!-- Convert buttons -->
-      <button class="btn primary" id="btnConvert" onclick="startConversion()" disabled>
-        ▶ Start Conversion
-      </button>
-
-      <!-- Settings -->
-      <div class="settings-section">
-        <h2>Settings</h2>
-        <div class="input-group">
-          <label>OCR Engine</label>
+      <!-- Settings Tab -->
+      <div class="tab-content" id="tabSettings">
+        <div class="setting-group">
+          <label>OCR 엔진</label>
           <select id="ocrEngine">
-            <option value="surya">Surya (Recommended)</option>
-            <option value="tesseract">Tesseract</option>
-            <option value="hybrid">Hybrid</option>
+            <option value="surya">Surya (추천 - 가장 정확)</option>
+            <option value="tesseract">Tesseract (가볍고 빠름)</option>
+            <option value="hybrid">하이브리드 (둘 다 사용)</option>
           </select>
+          <div class="hint">Surya는 한국어 인식률이 가장 높습니다</div>
         </div>
-        <div class="input-group">
-          <label>Reading Order AI</label>
+        <div class="setting-group">
+          <label>읽기 순서 AI</label>
           <select id="readingOrderMode">
-            <option value="rule_based">Rule-based (Fast)</option>
-            <option value="hybrid" selected>Hybrid (Recommended)</option>
-            <option value="vlm">VLM Only (High Quality)</option>
+            <option value="rule_based">규칙 기반 (빠름, 오프라인)</option>
+            <option value="hybrid" selected>하이브리드 (추천)</option>
+            <option value="vlm">VLM 전용 (최고 품질, API 필요)</option>
           </select>
+          <div class="hint">다단/표/각주가 많은 문서는 VLM 추천</div>
         </div>
-        <div class="input-group">
-          <label>Correction Mode</label>
+        <div class="setting-group">
+          <label>오탈자 교정 모드</label>
           <select id="correctionMode">
-            <option value="dictionary">Dictionary Only (Fast)</option>
-            <option value="hybrid" selected>Hybrid (Recommended)</option>
-            <option value="llm">LLM Only (High Quality)</option>
+            <option value="dictionary">사전 기반 (빠름, 오프라인)</option>
+            <option value="hybrid" selected>하이브리드 (추천)</option>
+            <option value="llm">LLM 전용 (최고 품질)</option>
           </select>
+          <div class="hint">갑을병정, 로마자 등 한국어 특화 교정 포함</div>
         </div>
-        <div class="input-group">
-          <label>Max Workers</label>
+        <div class="setting-group">
+          <label>동시 처리 수 (워커)</label>
           <input type="number" id="maxWorkers" value="4" min="1" max="16">
+          <div class="hint">CPU 코어 수에 맞추세요 (보통 4~8)</div>
         </div>
-        <div class="input-group">
-          <label>Pages per Chunk</label>
+        <div class="setting-group">
+          <label>청크 크기 (페이지 수)</label>
           <input type="number" id="pagesPerChunk" value="10" min="1" max="50">
+          <div class="hint">한 번에 처리할 페이지 수 (기본 10)</div>
+        </div>
+        <div class="setting-group">
+          <label>DPI (해상도)</label>
+          <input type="number" id="dpi" value="300" min="100" max="600" step="50">
+          <div class="hint">높을수록 정확하지만 느림 (300 추천)</div>
+        </div>
+        <div class="setting-group">
+          <label>Gemini API 키</label>
+          <input type="text" id="geminiKey" placeholder="입력하세요..." style="font-family:monospace;font-size:12px;">
+          <div class="hint">VLM/LLM 모드 사용 시 필요 (선택사항)</div>
         </div>
       </div>
     </div>
 
-    <!-- Content area -->
-    <div class="content">
-      <div class="jobs-container" id="jobsContainer">
-        <div class="empty-state" id="emptyState">
-          <div class="icon">📑</div>
-          <h3>No conversion jobs yet</h3>
-          <p>Select a PDF file or folder to get started</p>
+    <!-- RIGHT PANEL -->
+    <div class="right-panel">
+      <div class="right-tabs">
+        <div class="right-tab active" onclick="switchRightTab('jobs')">작업 목록 <span class="badge" id="jobCount" style="display:none">0</span></div>
+        <div class="right-tab" onclick="switchRightTab('preview')">미리보기</div>
+      </div>
+      <div class="right-content">
+        <div class="right-pane active" id="paneJobs">
+          <div class="job-list" id="jobList">
+            <div class="empty-state">
+              <div class="empty-icon">📑</div>
+              <h3>아직 변환 작업이 없습니다</h3>
+              <p>왼쪽에서 PDF 파일이나 폴더를 선택한 후<br>"변환 시작" 버튼을 눌러주세요.</p>
+            </div>
+          </div>
+        </div>
+        <div class="right-pane" id="panePreview">
+          <div class="empty-state">
+            <div class="empty-icon">👁</div>
+            <h3>미리보기</h3>
+            <p>변환이 완료된 파일을 클릭하면<br>여기에 결과가 표시됩니다.</p>
+          </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- HELP MODAL -->
+  <div class="modal-overlay" id="helpModal">
+    <div class="modal">
+      <button class="close-modal" onclick="hideHelp()">&#10005;</button>
+      <h2>PDF 변환기 사용 가이드</h2>
+      <h3>1단계: 파일 선택</h3>
+      <ul>
+        <li><strong>드래그 앤 드롭:</strong> 파일 탐색기에서 PDF를 앱 화면으로 끌어다 놓으세요</li>
+        <li><strong>클릭 선택:</strong> 드롭 영역을 클릭하면 파일 선택 창이 열립니다</li>
+        <li><strong>폴더 일괄:</strong> "폴더 일괄 변환" 모드를 선택하면 폴더 내 모든 PDF를 한번에 변환합니다</li>
+      </ul>
+      <h3>2단계: 저장 위치</h3>
+      <p>"찾아보기" 버튼을 눌러 변환 결과를 저장할 폴더를 선택하세요.</p>
+      <h3>3단계: 변환 시작</h3>
+      <p>"변환 시작" 버튼을 누르면 자동으로 변환이 시작됩니다. 진행률을 오른쪽 "작업 목록"에서 실시간 확인 가능합니다.</p>
+      <h3>설정 안내</h3>
+      <ul>
+        <li><strong>OCR 엔진:</strong> Surya가 한국어 인식에 가장 정확합니다</li>
+        <li><strong>읽기 순서 AI:</strong> 다단, 표가 많으면 "하이브리드" 추천</li>
+        <li><strong>오탈자 교정:</strong> 한국어 법률/시험 문서에 최적화</li>
+      </ul>
+      <h3>처리 특징</h3>
+      <ul>
+        <li>PDF를 10페이지씩 잘라서 병렬 처리 (빠른 속도)</li>
+        <li>이미지 PDF(스캔문서)와 디지털 PDF 모두 지원</li>
+        <li>표, 다단, 각주, 풍선글, 그래프 등 복잡한 레이아웃 인식</li>
+        <li>甲乙丙丁, ⅠⅡⅢ, 법률용어 등 한국어 특화 교정</li>
+      </ul>
     </div>
   </div>
 
   <script>
-    // State
     let backendUrl = "http://127.0.0.1:8765";
     let selectedFile = null;
     let selectedFolder = null;
     let outputDirectory = null;
+    let mode = "single";
     let jobs = {};
     let pollIntervals = {};
 
-    // Initialize
     async function init() {
-      try {
-        backendUrl = await window.electronAPI.getBackendUrl();
-      } catch { /* use default */ }
-      checkBackendHealth();
-      setInterval(checkBackendHealth, 5000);
+      try { backendUrl = await window.electronAPI.getBackendUrl(); } catch {}
+      checkBackend();
+      setInterval(checkBackend, 5000);
+      setupDragDrop();
     }
 
-    async function checkBackendHealth() {
+    async function checkBackend() {
       try {
-        const resp = await fetch(`${backendUrl}/api/health`);
-        if (resp.ok) {
-          document.getElementById("statusDot").classList.add("connected");
-          document.getElementById("statusText").textContent = "Backend Ready";
+        const r = await fetch(`${backendUrl}/api/health`);
+        if (r.ok) {
+          document.getElementById("statusBadge").classList.add("connected");
+          document.getElementById("statusText").textContent = "준비 완료";
         }
       } catch {
-        document.getElementById("statusDot").classList.remove("connected");
-        document.getElementById("statusText").textContent = "Backend Offline";
+        document.getElementById("statusBadge").classList.remove("connected");
+        document.getElementById("statusText").textContent = "백엔드 오프라인";
       }
     }
 
-    // File / Folder selection
-    async function selectFile() {
-      const path = await window.electronAPI.selectFile();
-      if (path) {
-        selectedFile = path;
-        selectedFolder = null;
-        document.getElementById("filePath").textContent = path;
-        document.getElementById("filePathGroup").style.display = "block";
-        document.getElementById("folderPathGroup").style.display = "none";
-        updateConvertButton();
+    function switchTab(name) {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+      if (name === "convert") {
+        document.querySelectorAll(".tab")[0].classList.add("active");
+        document.getElementById("tabConvert").classList.add("active");
+      } else {
+        document.querySelectorAll(".tab")[1].classList.add("active");
+        document.getElementById("tabSettings").classList.add("active");
       }
     }
 
-    async function selectFolder() {
-      const path = await window.electronAPI.selectFolder();
-      if (path) {
-        selectedFolder = path;
-        selectedFile = null;
-        document.getElementById("folderPath").textContent = path;
-        document.getElementById("folderPathGroup").style.display = "block";
-        document.getElementById("filePathGroup").style.display = "none";
-        updateConvertButton();
+    function switchRightTab(name) {
+      document.querySelectorAll(".right-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".right-pane").forEach(t => t.classList.remove("active"));
+      if (name === "jobs") {
+        document.querySelectorAll(".right-tab")[0].classList.add("active");
+        document.getElementById("paneJobs").classList.add("active");
+      } else {
+        document.querySelectorAll(".right-tab")[1].classList.add("active");
+        document.getElementById("panePreview").classList.add("active");
       }
+    }
+
+    function setMode(m) {
+      mode = m;
+      clearSelection();
+      document.getElementById("modeSingle").classList.toggle("active", m === "single");
+      document.getElementById("modeBatch").classList.toggle("active", m === "batch");
+      document.getElementById("dropIcon").textContent = m === "single" ? "📄" : "📁";
+      document.getElementById("dropTitle").textContent = m === "single" ? "PDF 파일을 여기로 드래그하세요" : "PDF 폴더를 여기로 드래그하세요";
+      document.getElementById("dropDesc").textContent = m === "single" ? "또는 클릭하여 파일을 선택하세요" : "또는 클릭하여 폴더를 선택하세요";
+    }
+
+    function setupDragDrop() {
+      const dz = document.getElementById("dropZone");
+      dz.addEventListener("dragover", e => { e.preventDefault(); e.stopPropagation(); dz.classList.add("drag-over"); });
+      dz.addEventListener("dragleave", e => { e.preventDefault(); dz.classList.remove("drag-over"); });
+      dz.addEventListener("drop", e => {
+        e.preventDefault(); e.stopPropagation(); dz.classList.remove("drag-over");
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length > 0 && mode === "single" && files[0].name.toLowerCase().endsWith(".pdf")) {
+          setSelectedFile(files[0].path);
+        }
+      });
+    }
+
+    async function handleDropZoneClick() {
+      if (mode === "single") {
+        const p = await window.electronAPI.selectFile();
+        if (p) setSelectedFile(p);
+      } else {
+        const p = await window.electronAPI.selectFolder();
+        if (p) setSelectedFolder(p);
+      }
+    }
+
+    function setSelectedFile(p) {
+      selectedFile = p; selectedFolder = null;
+      document.getElementById("dropZone").classList.add("has-file");
+      document.getElementById("dropIcon").textContent = "✅";
+      document.getElementById("dropTitle").textContent = "파일이 선택되었습니다";
+      document.getElementById("dropDesc").textContent = "";
+      const info = document.getElementById("fileInfo");
+      info.style.display = "block";
+      info.textContent = p.split(/[\\/]/).pop();
+      updateSteps(); updateStartBtn();
+    }
+
+    function setSelectedFolder(p) {
+      selectedFolder = p; selectedFile = null;
+      document.getElementById("dropZone").classList.add("has-file");
+      document.getElementById("dropIcon").textContent = "✅";
+      document.getElementById("dropTitle").textContent = "폴더가 선택되었습니다";
+      document.getElementById("dropDesc").textContent = "";
+      const info = document.getElementById("fileInfo");
+      info.style.display = "block";
+      info.textContent = p;
+      updateSteps(); updateStartBtn();
+    }
+
+    function clearSelection() {
+      selectedFile = null; selectedFolder = null;
+      document.getElementById("dropZone").classList.remove("has-file");
+      document.getElementById("fileInfo").style.display = "none";
+      document.getElementById("dropIcon").textContent = mode === "single" ? "📄" : "📁";
+      document.getElementById("dropTitle").textContent = mode === "single" ? "PDF 파일을 여기로 드래그하세요" : "PDF 폴더를 여기로 드래그하세요";
+      document.getElementById("dropDesc").textContent = mode === "single" ? "또는 클릭하여 파일을 선택하세요" : "또는 클릭하여 폴더를 선택하세요";
+      updateSteps(); updateStartBtn();
     }
 
     async function selectOutputDir() {
-      const path = await window.electronAPI.selectOutputDir();
-      if (path) {
-        outputDirectory = path;
-        document.getElementById("outputDir").textContent = path;
-        document.getElementById("outputDirGroup").style.display = "block";
-        updateConvertButton();
+      const p = await window.electronAPI.selectOutputDir();
+      if (p) {
+        outputDirectory = p;
+        const el = document.getElementById("outputPath");
+        el.textContent = p;
+        el.classList.remove("empty");
+        updateSteps(); updateStartBtn();
       }
     }
 
-    function updateConvertButton() {
-      const hasInput = selectedFile || selectedFolder;
-      const hasOutput = outputDirectory;
-      document.getElementById("btnConvert").disabled = !(hasInput && hasOutput);
+    function toggleFormat(fmt) {
+      const opt = fmt === "html" ? document.getElementById("optHtml") : document.getElementById("optMd");
+      const cb = fmt === "html" ? document.getElementById("fmtHtml") : document.getElementById("fmtMd");
+      cb.checked = !cb.checked;
+      opt.classList.toggle("checked", cb.checked);
     }
 
-    // Conversion
+    function updateSteps() {
+      const hasFile = selectedFile || selectedFolder;
+      const hasOutput = !!outputDirectory;
+      document.getElementById("step1").className = hasFile ? "step done" : "step active";
+      document.getElementById("stepLine1").className = hasFile ? "step-line done" : "step-line";
+      document.getElementById("step2").className = hasFile ? (hasOutput ? "step done" : "step active") : "step";
+      document.getElementById("stepLine2").className = hasFile && hasOutput ? "step-line done" : "step-line";
+      document.getElementById("step3").className = hasFile && hasOutput ? "step active" : "step";
+    }
+
+    function updateStartBtn() {
+      const ok = (selectedFile || selectedFolder) && outputDirectory && (document.getElementById("fmtHtml").checked || document.getElementById("fmtMd").checked);
+      document.getElementById("startBtn").disabled = !ok;
+    }
+
     async function startConversion() {
       const formats = [];
       if (document.getElementById("fmtHtml").checked) formats.push("html");
       if (document.getElementById("fmtMd").checked) formats.push("markdown");
-      if (formats.length === 0) { alert("Select at least one output format"); return; }
-
-      // Update settings
-      await updateSettings();
-
+      if (!formats.length) return;
+      await pushSettings();
       const endpoint = selectedFolder ? "/api/convert/batch" : "/api/convert";
       const body = selectedFolder
         ? { folder_path: selectedFolder, output_dir: outputDirectory, output_formats: formats }
         : { input_path: selectedFile, output_dir: outputDirectory, output_formats: formats };
-
       try {
-        const resp = await fetch(`${backendUrl}${endpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const data = await resp.json();
-        addJob(data.job_id, selectedFile || selectedFolder);
-      } catch (err) {
-        alert("Failed to start conversion: " + err.message);
-      }
+        const r = await fetch(`${backendUrl}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const d = await r.json();
+        addJob(d.job_id, selectedFile || selectedFolder);
+        switchRightTab("jobs");
+      } catch (e) { alert("변환 시작 실패: " + e.message); }
     }
 
-    async function updateSettings() {
-      const settings = [
-        { key: "max_workers", value: parseInt(document.getElementById("maxWorkers").value) },
-        { key: "pages_per_chunk", value: parseInt(document.getElementById("pagesPerChunk").value) },
-        { key: "ocr_engine", value: document.getElementById("ocrEngine").value },
-        { key: "reading_order_mode", value: document.getElementById("readingOrderMode").value },
-        { key: "correction_mode", value: document.getElementById("correctionMode").value },
+    async function pushSettings() {
+      const pairs = [
+        ["max_workers", parseInt(document.getElementById("maxWorkers").value)],
+        ["pages_per_chunk", parseInt(document.getElementById("pagesPerChunk").value)],
+        ["ocr_engine", document.getElementById("ocrEngine").value],
+        ["reading_order_mode", document.getElementById("readingOrderMode").value],
+        ["correction_mode", document.getElementById("correctionMode").value],
+        ["dpi", parseInt(document.getElementById("dpi").value)],
       ];
-      for (const s of settings) {
-        try {
-          await fetch(`${backendUrl}/api/config`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(s),
-          });
-        } catch { /* ignore */ }
+      for (const [k, v] of pairs) {
+        try { await fetch(`${backendUrl}/api/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k, value: v }) }); } catch {}
       }
     }
 
-    // Job management
-    function addJob(jobId, inputPath) {
-      document.getElementById("emptyState").style.display = "none";
-      jobs[jobId] = { inputPath, status: "pending", progress: 0, message: "Queued" };
-      renderJobs();
-      startPolling(jobId);
+    function addJob(id, path) {
+      jobs[id] = { path, status: "pending", progress: 0, message: "대기 중..." };
+      updateJobBadge(); renderJobs(); startPolling(id);
     }
 
-    function startPolling(jobId) {
-      pollIntervals[jobId] = setInterval(async () => {
+    function startPolling(id) {
+      pollIntervals[id] = setInterval(async () => {
         try {
-          const resp = await fetch(`${backendUrl}/api/jobs/${jobId}`);
-          const data = await resp.json();
-          jobs[jobId] = {
-            ...jobs[jobId],
-            status: data.status,
-            progress: data.progress,
-            message: data.message,
-            result: data.result,
-          };
+          const r = await fetch(`${backendUrl}/api/jobs/${id}`);
+          const d = await r.json();
+          const labels = { pending: "대기 중", processing: "변환 중...", completed: "완료", error: "오류 발생" };
+          jobs[id] = { ...jobs[id], status: d.status, progress: d.progress, message: labels[d.status] || d.message, detailMsg: d.message, result: d.result };
           renderJobs();
-          if (data.status === "completed" || data.status === "error") {
-            clearInterval(pollIntervals[jobId]);
-            delete pollIntervals[jobId];
-          }
-        } catch { /* retry */ }
-      }, 1000);
+          if (d.status === "completed" || d.status === "error") { clearInterval(pollIntervals[id]); delete pollIntervals[id]; }
+        } catch {}
+      }, 800);
+    }
+
+    function updateJobBadge() {
+      const badge = document.getElementById("jobCount");
+      const cnt = Object.keys(jobs).length;
+      badge.textContent = cnt;
+      badge.style.display = cnt > 0 ? "inline-flex" : "none";
     }
 
     function renderJobs() {
-      const container = document.getElementById("jobsContainer");
-      const cards = Object.entries(jobs).reverse().map(([jid, job]) => {
-        const pct = Math.round(job.progress * 100);
-        const filename = job.inputPath ? job.inputPath.split(/[\\/]/).pop() : "Unknown";
-        const actions = job.status === "completed" && job.result
-          ? `<div class="job-actions">
-               <button class="btn" onclick="openOutput('${(job.result.output_dir || outputDirectory).replace(/\\/g, "\\\\")}')">📂 Open Output</button>
-             </div>`
-          : "";
-        return `
-          <div class="job-card">
-            <div class="job-header">
-              <div class="job-title">${filename}</div>
-              <div class="job-status ${job.status}">${job.status.toUpperCase()}</div>
-            </div>
-            <div class="progress-bar">
-              <div class="progress-fill" style="width:${pct}%"></div>
-            </div>
-            <div class="job-message">${pct}% — ${job.message}</div>
-            ${actions}
-          </div>`;
-      });
-
-      const empty = document.getElementById("emptyState");
-      if (cards.length > 0) {
-        container.innerHTML = cards.join("\n");
-      } else {
-        container.innerHTML = "";
-        container.appendChild(empty);
-        empty.style.display = "block";
+      const list = document.getElementById("jobList");
+      const entries = Object.entries(jobs).reverse();
+      if (!entries.length) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">📑</div><h3>아직 변환 작업이 없습니다</h3><p>왼쪽에서 PDF 파일이나 폴더를 선택한 후<br>"변환 시작" 버튼을 눌러주세요.</p></div>';
+        return;
       }
+      const labels = { pending: "대기", processing: "변환 중", completed: "완료", error: "오류" };
+      list.innerHTML = entries.map(([id, j]) => {
+        const pct = Math.round(j.progress * 100);
+        const name = j.path ? j.path.split(/[\\/]/).pop() : "알 수 없음";
+        const actions = j.status === "completed" && j.result
+          ? `<div class="jc-actions"><button onclick="openOutput('${(j.result.output_dir || outputDirectory).replace(/\\/g, "\\\\")}')">📂 결과 폴더 열기</button><button onclick="openInEditor('${(j.result.output_dir || outputDirectory).replace(/\\/g, "\\\\")}')">&#9998; HTML 에디터로 열기</button></div>` : "";
+        return `<div class="job-card"><div class="jc-top"><div class="jc-name">${name}</div><div class="jc-badge ${j.status}">${labels[j.status]||j.status}</div></div><div class="jc-progress"><div class="jc-progress-fill ${j.status}" style="width:${pct}%"></div></div><div class="jc-detail"><div class="jc-msg">${j.detailMsg||j.message}</div><div class="jc-pct">${pct}%</div></div>${actions}</div>`;
+      }).join("");
     }
 
-    async function openOutput(dir) {
-      await window.electronAPI.openFolder(dir);
+    async function openOutput(dir) { await window.electronAPI.openFolder(dir); }
+    async function openInEditor(dir) {
+      // Find the first .html file in the output directory
+      await window.electronAPI.openEditor(dir);
     }
-
-    // Start
+    function showHelp() { document.getElementById("helpModal").classList.add("show"); }
+    function hideHelp() { document.getElementById("helpModal").classList.remove("show"); }
+    document.getElementById("helpModal").addEventListener("click", e => { if (e.target === document.getElementById("helpModal")) hideHelp(); });
     init();
   </script>
 </body>

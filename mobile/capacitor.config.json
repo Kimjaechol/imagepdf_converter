@@ -1,0 +1,15 @@
+{
+  "appId": "com.pdfconverter.mobile",
+  "appName": "PDF 변환기",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#1a1a2e"
+    }
+  }
+}

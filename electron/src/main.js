@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { spawn } = require("child_process");
 const http = require("http");
 
@@ -144,6 +145,66 @@ ipcMain.handle("open-folder", async (_event, folderPath) => {
 
 ipcMain.handle("open-file", async (_event, filePath) => {
   shell.openPath(filePath);
+});
+
+ipcMain.handle("read-file", async (_event, filePath) => {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle("save-file", async (_event, filePath, content) => {
+  try {
+    fs.writeFileSync(filePath, content, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle("open-editor", async (_event, filePath) => {
+  const editorWindow = new BrowserWindow({
+    width: 1100,
+    height: 750,
+    minWidth: 800,
+    minHeight: 500,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+    title: "HTML 에디터 - PDF 변환기",
+  });
+  const query = filePath ? `?file=${encodeURIComponent(filePath)}` : "";
+  editorWindow.loadFile(path.join(__dirname, "..", "public", "editor.html"), {
+    search: query,
+  });
+});
+
+ipcMain.handle("select-html-file", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [
+      { name: "HTML Files", extensions: ["html", "htm"] },
+      { name: "Markdown Files", extensions: ["md"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle("save-file-dialog", async (_event, defaultName, filters) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: defaultName,
+    filters: filters || [
+      { name: "HTML Files", extensions: ["html"] },
+      { name: "Markdown Files", extensions: ["md"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  return result.canceled ? null : result.filePath;
 });
 
 // -------------------------------------------------------------------
