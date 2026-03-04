@@ -15,6 +15,7 @@ electron/dist/
 electron/out/
 
 # Rust / Tauri
+target/
 src-tauri/target/
 build_output/
 
