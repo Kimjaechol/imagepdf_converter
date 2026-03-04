@@ -77,6 +77,24 @@ if exist "%PORTABLE_PYTHON%\python.exe" (
     echo Installing surya-ocr...
     "%PORTABLE_PYTHON%\python.exe" -m pip install --no-warn-script-location --quiet surya-ocr 2>nul
 
+    echo Cleaning up portable Python to reduce size...
+    :: Remove __pycache__ directories
+    for /d /r "%PORTABLE_PYTHON%" %%d in (__pycache__) do (
+        if exist "%%d" rmdir /s /q "%%d"
+    )
+    :: Remove .dist-info directories
+    for /d /r "%PORTABLE_PYTHON%" %%d in (*.dist-info) do (
+        if exist "%%d" rmdir /s /q "%%d"
+    )
+    :: Remove test directories from packages
+    for /d /r "%PORTABLE_PYTHON%\Lib\site-packages" %%d in (tests test) do (
+        if exist "%%d" rmdir /s /q "%%d"
+    )
+    :: Remove pip cache
+    if exist "%PORTABLE_PYTHON%\Lib\site-packages\pip" rmdir /s /q "%PORTABLE_PYTHON%\Lib\site-packages\pip"
+    if exist "%PORTABLE_PYTHON%\Scripts\pip*.exe" del /q "%PORTABLE_PYTHON%\Scripts\pip*.exe"
+    echo Cleanup complete!
+
     echo Python environment ready!
 )
 

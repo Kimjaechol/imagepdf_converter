@@ -116,6 +116,32 @@ if %errorlevel% neq 0 (
 )
 
 :: ──────────────────────────────────────────────
+:: 5.9단계: portable_python 용량 최적화
+:: ──────────────────────────────────────────────
+echo [5.9/7] portable_python 정리 중 (용량 최적화)...
+
+:: __pycache__ 디렉토리 제거
+for /d /r "%PORTABLE_DIR%" %%d in (__pycache__) do (
+    if exist "%%d" rmdir /s /q "%%d"
+)
+
+:: .dist-info 디렉토리 제거
+for /d /r "%PORTABLE_DIR%" %%d in (*.dist-info) do (
+    if exist "%%d" rmdir /s /q "%%d"
+)
+
+:: 패키지 내 tests/test 디렉토리 제거
+for /d /r "%PORTABLE_DIR%\Lib\site-packages" %%d in (tests test) do (
+    if exist "%%d" rmdir /s /q "%%d"
+)
+
+:: pip 자체 제거 (배포 후 불필요)
+if exist "%PORTABLE_DIR%\Lib\site-packages\pip" rmdir /s /q "%PORTABLE_DIR%\Lib\site-packages\pip"
+if exist "%PORTABLE_DIR%\Scripts\pip*.exe" del /q "%PORTABLE_DIR%\Scripts\pip*.exe"
+
+echo 정리 완료!
+
+:: ──────────────────────────────────────────────
 :: 6단계: 백엔드 코드 복사
 :: ──────────────────────────────────────────────
 echo [6/7] 백엔드 코드 복사 중...
