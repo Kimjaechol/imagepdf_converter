@@ -1,0 +1,72 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod backend;
+mod commands;
+mod document;
+mod moa;
+
+use tauri::Manager;
+
+fn main() {
+    tracing_subscriber::fmt::init();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = backend::process::start_backend(&handle).await {
+                    tracing::error!("Failed to start backend: {}", e);
+                }
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            // File operations
+            commands::file_ops::get_backend_url,
+            commands::file_ops::read_file_content,
+            commands::file_ops::write_file_content,
+            // Conversion
+            commands::conversion::convert_pdf,
+            commands::conversion::convert_batch,
+            commands::conversion::convert_document,
+            commands::conversion::get_job_status,
+            commands::conversion::list_jobs,
+            // Config
+            commands::config::get_config,
+            commands::config::update_config,
+            commands::config::add_dictionary_term,
+            // Document conversion (Rust-native)
+            commands::document_cmd::convert_docx_to_html,
+            commands::document_cmd::convert_hwpx_to_html,
+            commands::document_cmd::convert_xlsx_to_html,
+            commands::document_cmd::convert_pptx_to_html,
+            commands::document_cmd::convert_any_document,
+            // MoA gateway
+            commands::moa_cmd::moa_convert,
+            commands::moa_cmd::moa_health,
+            commands::moa_cmd::moa_supported_formats,
+            commands::moa_cmd::moa_tool_manifest,
+            // Backend lifecycle
+            commands::backend_cmd::restart_backend,
+            commands::backend_cmd::backend_health,
+        ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let handle = window.app_handle().clone();
+                // Use thread to ensure cleanup completes before exit
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(backend::process::stop_backend(&handle));
+                });
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

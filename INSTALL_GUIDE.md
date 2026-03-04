@@ -83,19 +83,46 @@ cd imagepdf_converter
 
 ## 3. Python 라이브러리 설치
 
-터미널(또는 명령 프롬프트)에서:
+### Windows (명령 프롬프트 CMD 또는 PowerShell)
+
+> **중요:** Windows에서는 `python3`이 아닌 **`python`** 명령을 사용합니다!
+
+```cmd
+:: 프로젝트 폴더로 이동
+cd imagepdf_converter
+
+:: 가상환경 생성
+python -m venv venv
+
+:: 가상환경 활성화
+venv\Scripts\activate
+
+:: 라이브러리 설치 (약 5-10분 소요)
+pip install -r backend/requirements.txt
+```
+
+**`python`도 안 될 때:**
+1. `where python` 실행하여 Python 경로 확인
+2. Python이 설치되어 있지만 PATH에 없는 경우:
+   - Windows 검색 → "환경 변수" → "환경 변수 편집"
+   - Path에 Python 설치 경로 추가 (예: `C:\Users\사용자이름\AppData\Local\Programs\Python\Python312\`)
+3. Poetry로 Python을 설치한 경우:
+   ```cmd
+   C:\Users\사용자이름\AppData\Roaming\pypoetry\venv\Scripts\python.exe -m venv venv
+   venv\Scripts\activate
+   pip install -r backend/requirements.txt
+   ```
+
+### macOS / Linux
 
 ```bash
 # 프로젝트 폴더로 이동
 cd imagepdf_converter
 
-# 가상환경 생성 (권장)
-python -m venv venv
+# 가상환경 생성
+python3 -m venv venv
 
 # 가상환경 활성화
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
 source venv/bin/activate
 
 # 라이브러리 설치 (약 5-10분 소요)

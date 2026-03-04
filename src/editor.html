@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HTML 에디터 - MoA 문서 변환기</title>
+  <link rel="stylesheet" href="styles/editor.css">
+</head>
+<body>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <div class="toolbar-group">
+    <button class="tool-btn" data-cmd="bold" title="굵게 (Ctrl+B)"><b>B</b></button>
+    <button class="tool-btn" data-cmd="italic" title="기울임 (Ctrl+I)"><i>I</i></button>
+    <button class="tool-btn" data-cmd="underline" title="밑줄 (Ctrl+U)"><u>U</u></button>
+  </div>
+  <div class="toolbar-sep"></div>
+  <div class="toolbar-group">
+    <button class="tool-btn" data-cmd="h1" title="제목 1">H1</button>
+    <button class="tool-btn" data-cmd="h2" title="제목 2">H2</button>
+    <button class="tool-btn" data-cmd="h3" title="제목 3">H3</button>
+  </div>
+  <div class="toolbar-sep"></div>
+  <div class="toolbar-group">
+    <button class="tool-btn" data-cmd="ul" title="목록">&#x2022;</button>
+    <button class="tool-btn" data-cmd="ol" title="번호 목록">1.</button>
+    <button class="tool-btn" data-cmd="quote" title="인용">&#x201C;</button>
+    <button class="tool-btn" data-cmd="table" title="표 삽입">&#x25A6;</button>
+  </div>
+  <div class="toolbar-sep"></div>
+  <div class="toolbar-group toolbar-actions">
+    <button class="tool-btn action-btn" id="btn-open">열기</button>
+    <button class="tool-btn action-btn" id="btn-save">저장</button>
+    <select id="view-mode" class="view-select">
+      <option value="split">분할 보기</option>
+      <option value="edit">편집만</option>
+      <option value="preview">미리보기</option>
+    </select>
+  </div>
+</div>
+
+<!-- Editor Area -->
+<div class="editor-container" id="editor-container">
+  <div class="editor-pane" id="edit-pane">
+    <div class="pane-header">HTML 소스</div>
+    <textarea id="source-editor" spellcheck="false" placeholder="HTML 소스를 입력하거나 파일을 열어주세요..."></textarea>
+  </div>
+  <div class="divider" id="divider"></div>
+  <div class="preview-pane" id="preview-pane">
+    <div class="pane-header">미리보기</div>
+    <iframe id="preview-frame" sandbox="allow-same-origin"></iframe>
+  </div>
+</div>
+
+<script type="module">
+  import * as api from './js/api.js';
+
+  const editor = document.getElementById('source-editor');
+  const preview = document.getElementById('preview-frame');
+  let currentFilePath = null;
+  let debounceTimer = null;
+
+  // ─── Load file from URL params
+  const params = new URLSearchParams(window.location.search);
+  const filePath = params.get('file');
+  if (filePath) {
+    loadFile(filePath);
+  }
+
+  async function loadFile(path) {
+    try {
+      const content = await api.readFile(path);
+      if (content) {
+        editor.value = content;
+        currentFilePath = path;
+        updatePreview();
+        document.title = `${path.split(/[\\/]/).pop()} - HTML 에디터`;
+      }
+    } catch (e) {
+      console.error('Failed to load file:', e);
+    }
+  }
+
+  // ─── Preview update
+  function updatePreview() {
+    const content = editor.value;
+    preview.srcdoc = content;
+  }
+
+  editor.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(updatePreview, 300);
+  });
+
+  // ─── Toolbar commands
+  document.querySelectorAll('.tool-btn[data-cmd]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cmd = btn.dataset.cmd;
+      const start = editor.selectionStart;
+      const end = editor.selectionEnd;
+      const selected = editor.value.substring(start, end);
+
+      let replacement = '';
+      switch (cmd) {
+        case 'bold': replacement = `<strong>${selected || '텍스트'}</strong>`; break;
+        case 'italic': replacement = `<em>${selected || '텍스트'}</em>`; break;
+        case 'underline': replacement = `<u>${selected || '텍스트'}</u>`; break;
+        case 'h1': replacement = `<h1>${selected || '제목'}</h1>`; break;
+        case 'h2': replacement = `<h2>${selected || '제목'}</h2>`; break;
+        case 'h3': replacement = `<h3>${selected || '제목'}</h3>`; break;
+        case 'ul': replacement = `<ul>\n  <li>${selected || '항목'}</li>\n</ul>`; break;
+        case 'ol': replacement = `<ol>\n  <li>${selected || '항목'}</li>\n</ol>`; break;
+        case 'quote': replacement = `<blockquote>${selected || '인용문'}</blockquote>`; break;
+        case 'table':
+          replacement = `<table>\n  <tr><th>열 1</th><th>열 2</th></tr>\n  <tr><td>데이터</td><td>데이터</td></tr>\n</table>`;
+          break;
+      }
+
+      editor.value = editor.value.substring(0, start) + replacement + editor.value.substring(end);
+      editor.focus();
+      updatePreview();
+    });
+  });
+
+  // ─── Open / Save
+  document.getElementById('btn-open').addEventListener('click', async () => {
+    const path = await api.selectHtmlFile();
+    if (path) loadFile(path);
+  });
+
+  document.getElementById('btn-save').addEventListener('click', async () => {
+    try {
+      if (currentFilePath) {
+        await api.writeFile(currentFilePath, editor.value);
+        document.title = `${currentFilePath.split(/[\\/]/).pop()} - 저장됨`;
+      } else {
+        const path = await api.saveFileDialog('output.html');
+        if (path) {
+          await api.writeFile(path, editor.value);
+          currentFilePath = path;
+          document.title = `${path.split(/[\\/]/).pop()} - HTML 에디터`;
+        }
+      }
+    } catch (e) {
+      console.error('Save failed:', e);
+      alert(`저장 실패: ${e}`);
+    }
+  });
+
+  // ─── View mode
+  document.getElementById('view-mode').addEventListener('change', (e) => {
+    const container = document.getElementById('editor-container');
+    const editPane = document.getElementById('edit-pane');
+    const previewPane = document.getElementById('preview-pane');
+    const divider = document.getElementById('divider');
+
+    switch (e.target.value) {
+      case 'split':
+        editPane.style.display = 'flex';
+        previewPane.style.display = 'flex';
+        divider.style.display = 'block';
+        break;
+      case 'edit':
+        editPane.style.display = 'flex';
+        previewPane.style.display = 'none';
+        divider.style.display = 'none';
+        break;
+      case 'preview':
+        editPane.style.display = 'none';
+        previewPane.style.display = 'flex';
+        divider.style.display = 'none';
+        break;
+    }
+  });
+
+  // ─── Keyboard shortcuts
+  editor.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === 's') {
+        e.preventDefault();
+        document.getElementById('btn-save').click();
+      }
+    }
+  });
+
+  // ─── Resizable divider
+  const divider = document.getElementById('divider');
+  let isDragging = false;
+  divider.addEventListener('mousedown', () => { isDragging = true; });
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const container = document.getElementById('editor-container');
+    const rect = container.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const editPane = document.getElementById('edit-pane');
+    const previewPane = document.getElementById('preview-pane');
+    editPane.style.flex = ratio;
+    previewPane.style.flex = 1 - ratio;
+  });
+  document.addEventListener('mouseup', () => { isDragging = false; });
+</script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+/* ─── HTML 에디터 스타일 ─── */
+
+:root {
+  --bg: #0f0f14;
+  --bg2: #16161e;
+  --bg3: #1e1e2a;
+  --border: #2a2a3d;
+  --text: #e8e8ef;
+  --text2: #9898b0;
+  --accent: #7c5cfc;
+  --radius: 6px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Malgun Gothic', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Toolbar ─── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-group { display: flex; gap: 2px; }
+.toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
+
+.tool-btn {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text2);
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tool-btn:hover { background: var(--bg3); border-color: var(--border); color: var(--text); }
+
+.action-btn { color: var(--accent); font-weight: 600; }
+
+.toolbar-actions { margin-left: auto; gap: 8px; }
+
+.view-select {
+  padding: 4px 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+/* ─── Editor Container ─── */
+.editor-container {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.editor-pane, .preview-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#source-editor {
+  flex: 1;
+  resize: none;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: none;
+  font-family: 'Cascadia Code', 'Fira Code', 'D2Coding', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  outline: none;
+}
+
+#preview-frame {
+  flex: 1;
+  border: none;
+  background: white;
+}
+
+/* ─── Divider ─── */
+.divider {
+  width: 4px;
+  background: var(--border);
+  cursor: col-resize;
+  transition: background 0.2s;
+}
+.divider:hover { background: var(--accent); }
