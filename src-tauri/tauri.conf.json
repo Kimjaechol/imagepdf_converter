@@ -28,7 +28,12 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg", "appimage"],
-    "icon": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
     "resources": [
       "../backend/**/*.py",
       "../backend/**/*.txt",
