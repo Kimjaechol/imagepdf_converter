@@ -6,7 +6,6 @@ mod document;
 mod moa;
 
 use tauri::Manager;
-use tracing_subscriber;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -18,7 +17,6 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            // Start Python backend sidecar
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = backend::process::start_backend(&handle).await {
                     tracing::error!("Failed to start backend: {}", e);
@@ -51,6 +49,7 @@ fn main() {
             commands::moa_cmd::moa_convert,
             commands::moa_cmd::moa_health,
             commands::moa_cmd::moa_supported_formats,
+            commands::moa_cmd::moa_tool_manifest,
             // Backend lifecycle
             commands::backend_cmd::restart_backend,
             commands::backend_cmd::backend_health,
@@ -58,8 +57,13 @@ fn main() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let handle = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    backend::process::stop_backend(&handle).await;
+                // Use thread to ensure cleanup completes before exit
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(backend::process::stop_backend(&handle));
                 });
             }
         })

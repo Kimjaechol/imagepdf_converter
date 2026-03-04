@@ -1,6 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nickel-org/nickel.rs/master/tauri.schema.json",
-  "productName": "PDF 변환기",
+  "productName": "MoA 문서 변환기",
   "version": "1.0.0",
   "identifier": "com.zeroclaw.moa.docconverter",
   "build": {
@@ -32,9 +31,6 @@
     "icon": [],
     "resources": [
       "../backend/**/*.py",
-      "../backend/**/*.json",
-      "../backend/**/*.yaml",
-      "../backend/**/*.yml",
       "../backend/**/*.txt",
       "../config/**/*"
     ],

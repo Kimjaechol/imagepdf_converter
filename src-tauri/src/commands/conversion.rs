@@ -89,7 +89,8 @@ pub async fn convert_document(
             let result =
                 crate::document::converter::convert_file(&input_path, &out_dir, &output_formats)
                     .await?;
-            Ok(serde_json::to_value(result).unwrap())
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize result: {}", e))
         }
         // PDF → Python backend
         "pdf" => {

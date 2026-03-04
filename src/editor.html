@@ -130,14 +130,21 @@
   });
 
   document.getElementById('btn-save').addEventListener('click', async () => {
-    if (currentFilePath) {
-      await api.writeFile(currentFilePath, editor.value);
-    } else {
-      const path = await api.saveFileDialog('output.html');
-      if (path) {
-        await api.writeFile(path, editor.value);
-        currentFilePath = path;
+    try {
+      if (currentFilePath) {
+        await api.writeFile(currentFilePath, editor.value);
+        document.title = `${currentFilePath.split(/[\\/]/).pop()} - 저장됨`;
+      } else {
+        const path = await api.saveFileDialog('output.html');
+        if (path) {
+          await api.writeFile(path, editor.value);
+          currentFilePath = path;
+          document.title = `${path.split(/[\\/]/).pop()} - HTML 에디터`;
+        }
       }
+    } catch (e) {
+      console.error('Save failed:', e);
+      alert(`저장 실패: ${e}`);
     }
   });
 

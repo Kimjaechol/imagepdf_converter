@@ -127,7 +127,6 @@ fn parse_hwpx_section(xml: &str) -> String {
 
     let mut in_paragraph = false;
     let mut in_run = false;
-    let mut in_table = false;
     let mut in_table_cell = false;
     let mut text_buf = String::new();
     let mut is_bold = false;
@@ -137,7 +136,8 @@ fn parse_hwpx_section(xml: &str) -> String {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local = local_name(e.name().as_ref());
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
                 match local {
                     "p" => {
                         in_paragraph = true;
@@ -166,7 +166,6 @@ fn parse_hwpx_section(xml: &str) -> String {
                         }
                     }
                     "tbl" => {
-                        in_table = true;
                         html.push_str("<table>\n");
                     }
                     "tr" => {
@@ -198,7 +197,8 @@ fn parse_hwpx_section(xml: &str) -> String {
                 }
             }
             Ok(Event::End(ref e)) => {
-                let local = local_name(e.name().as_ref());
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
                 match local {
                     "p" => {
                         if !text_buf.trim().is_empty() || in_table_cell {
@@ -222,7 +222,6 @@ fn parse_hwpx_section(xml: &str) -> String {
                         in_run = false;
                     }
                     "tbl" => {
-                        in_table = false;
                         html.push_str("</table>\n");
                     }
                     "tr" => {

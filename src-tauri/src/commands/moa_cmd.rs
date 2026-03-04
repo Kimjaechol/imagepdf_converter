@@ -1,4 +1,3 @@
-use crate::document::converter;
 use serde::{Deserialize, Serialize};
 
 /// MoA Gateway Tool Interface
@@ -86,7 +85,7 @@ pub async fn moa_convert(request: MoaConvertRequest) -> Result<MoaConvertRespons
 
     match ext.as_str() {
         "docx" | "hwpx" | "xlsx" | "pptx" => {
-            match converter::convert_file(&request.source, &out_dir, &formats).await {
+            match crate::document::converter::convert_file(&request.source, &out_dir, &formats).await {
                 Ok(result) => Ok(MoaConvertResponse {
                     success: true,
                     task_id: request.task_id,
@@ -237,4 +236,9 @@ pub fn moa_supported_formats() -> Vec<MoaSupportedFormat> {
             engine: "rust-native".into(),
         },
     ]
+}
+
+#[tauri::command]
+pub fn moa_tool_manifest() -> serde_json::Value {
+    serde_json::to_value(crate::moa::gateway::tool_manifest()).unwrap_or_default()
 }

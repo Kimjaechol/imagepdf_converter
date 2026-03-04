@@ -23,7 +23,6 @@ const $$ = (sel) => document.querySelectorAll(sel);
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
   await checkBackendHealth();
-  // Periodically check health
   setInterval(checkBackendHealth, 10000);
 });
 
@@ -72,9 +71,12 @@ function setupEventListeners() {
   // Convert button
   $("#btn-convert")?.addEventListener("click", handleConvert);
 
-  // Drop zone
+  // Drop zone click → file select
   const dropZone = $("#drop-zone");
   if (dropZone) {
+    dropZone.addEventListener("click", (e) => {
+      if (e.target.tagName !== "BUTTON") handleSelectFile();
+    });
     dropZone.addEventListener("dragover", (e) => {
       e.preventDefault();
       dropZone.classList.add("dragover");
@@ -85,7 +87,15 @@ function setupEventListeners() {
     dropZone.addEventListener("drop", (e) => {
       e.preventDefault();
       dropZone.classList.remove("dragover");
-      // Tauri handles file drops differently
+      // In Tauri v2, file drop paths come from the event
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        // webview file drop provides File objects, use path if available
+        const file = files[0];
+        if (file.path) {
+          handleFileSelected(file.path);
+        }
+      }
     });
   }
 
@@ -95,9 +105,12 @@ function setupEventListeners() {
   });
   $("#btn-open-editor")?.addEventListener("click", handleOpenEditor);
 
-  // Settings tab
+  // Settings tabs
   $("#tab-convert")?.addEventListener("click", () => switchTab("convert"));
   $("#tab-settings")?.addEventListener("click", () => switchTab("settings"));
+
+  // Settings apply
+  setupSettingsListeners();
 
   // Backend restart
   $("#btn-restart-backend")?.addEventListener("click", async () => {
@@ -112,16 +125,49 @@ function setupEventListeners() {
   });
 }
 
+function setupSettingsListeners() {
+  const settingsMap = {
+    "set-workers": "pipeline.max_workers",
+    "set-dpi": "pipeline.dpi",
+    "set-ocr-lang": "ocr.languages",
+    "set-reading-order": "reading_order.mode",
+    "set-heading": "heading.mode",
+    "set-correction": "correction.mode",
+  };
+
+  for (const [id, configKey] of Object.entries(settingsMap)) {
+    const el = $(`#${id}`);
+    if (el) {
+      el.addEventListener("change", async () => {
+        try {
+          let value = el.value;
+          if (id === "set-workers" || id === "set-dpi") {
+            value = parseInt(value, 10);
+          }
+          if (id === "set-ocr-lang") {
+            value = value.split(",");
+          }
+          await api.updateConfig(configKey, value);
+        } catch (e) {
+          console.error(`Failed to update ${configKey}:`, e);
+        }
+      });
+    }
+  }
+}
+
 // ─── File Selection ─────────────────────────────────────
 async function handleSelectFile() {
   const path = await api.selectDocumentFile();
   if (!path) return;
+  handleFileSelected(path);
+}
 
+function handleFileSelected(path) {
   state.selectedFile = path;
   const fileName = path.split(/[\\/]/).pop();
   const ext = api.getFileExtension(path);
 
-  // Update UI
   const fileInfo = $("#file-info");
   if (fileInfo) {
     const icon = getFileIcon(ext);
@@ -136,9 +182,14 @@ async function handleSelectFile() {
       </div>`;
   }
 
-  // Auto-set output dir
+  // Auto-set output dir to parent directory of selected file
   if (!state.outputDir) {
-    state.outputDir = path.substring(0, path.lastIndexOf(/[\\/]/.test(path) ? path.match(/[\\/]/g).pop() : "/"));
+    const lastSep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+    if (lastSep > 0) {
+      state.outputDir = path.substring(0, lastSep);
+      const outputInfo = $("#output-info");
+      if (outputInfo) outputInfo.textContent = state.outputDir;
+    }
   }
 
   updateConvertButton();
@@ -149,9 +200,7 @@ async function handleSelectFolder() {
   if (!path) return;
   state.selectedFolder = path;
   const folderInfo = $("#folder-info");
-  if (folderInfo) {
-    folderInfo.textContent = path;
-  }
+  if (folderInfo) folderInfo.textContent = path;
   if (!state.outputDir) state.outputDir = path;
   updateConvertButton();
 }
@@ -161,9 +210,7 @@ async function handleSelectOutput() {
   if (!path) return;
   state.outputDir = path;
   const outputInfo = $("#output-info");
-  if (outputInfo) {
-    outputInfo.textContent = path;
-  }
+  if (outputInfo) outputInfo.textContent = path;
 }
 
 // ─── Conversion ─────────────────────────────────────────
@@ -182,8 +229,10 @@ async function handleConvert() {
   }
 
   const btn = $("#btn-convert");
-  btn.disabled = true;
-  btn.textContent = "변환 중...";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "변환 중...";
+  }
   showProgress(true);
   updateProgress(0, "변환 준비 중...");
 
@@ -196,16 +245,19 @@ async function handleConvert() {
   } catch (e) {
     showStatus(`변환 실패: ${e}`, "error");
   } finally {
-    btn.disabled = false;
-    btn.textContent = "변환 시작";
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "변환 시작";
+    }
   }
 }
 
 async function convertSingle() {
   const ext = api.getFileExtension(state.selectedFile);
 
+  // Unified conversion - routes automatically based on file extension
   if (api.isRustNativeFormat(ext)) {
-    // Rust-native conversion (instant)
+    // Rust-native conversion (instant, no job queue)
     updateProgress(30, `${ext.toUpperCase()} 변환 중...`);
     const result = await api.convertDocument(
       state.selectedFile,
@@ -216,7 +268,7 @@ async function convertSingle() {
     showResults(result);
     showStatus("변환 완료!", "success");
   } else {
-    // PDF → Python backend (async with progress)
+    // PDF → Python backend (async with progress via WebSocket)
     const resp = await api.convertPdf(
       state.selectedFile,
       state.outputDir,
@@ -225,7 +277,6 @@ async function convertSingle() {
     const jobId = resp.job_id;
     state.currentJobId = jobId;
 
-    // Connect WebSocket for progress
     const ws = await api.connectProgress(jobId, (data) => {
       if (data.progress !== undefined) {
         updateProgress(data.progress * 100, data.message || "처리 중...");
@@ -241,7 +292,6 @@ async function convertSingle() {
     });
     state.ws = ws;
 
-    // Fallback: poll status if WebSocket fails
     if (!ws) {
       pollJobProgress(jobId);
     }
@@ -296,9 +346,13 @@ async function pollJobProgress(jobId) {
 }
 
 async function pollJobResult(jobId) {
-  const status = await api.getJobStatus(jobId);
-  if (status.result) {
-    showResults(status.result);
+  try {
+    const status = await api.getJobStatus(jobId);
+    if (status.result) {
+      showResults(status.result);
+    }
+  } catch (e) {
+    console.error("Failed to poll job result:", e);
   }
 }
 
@@ -313,8 +367,7 @@ function updateModeUI() {
 function updateConvertButton() {
   const btn = $("#btn-convert");
   if (!btn) return;
-  const hasInput =
-    state.mode === "single" ? !!state.selectedFile : !!state.selectedFolder;
+  const hasInput = state.mode === "single" ? !!state.selectedFile : !!state.selectedFolder;
   btn.disabled = !hasInput || state.formats.length === 0;
 }
 
@@ -340,13 +393,15 @@ function showStatus(message, type) {
   el.className = `status-message ${type}`;
   el.style.display = "block";
   if (type === "success" || type === "info") {
-    setTimeout(() => {
-      el.style.display = "none";
-    }, 5000);
+    setTimeout(() => { el.style.display = "none"; }, 5000);
   }
 }
 
 function showResults(result) {
+  // Hide welcome, show results
+  const welcome = $("#welcome-section");
+  if (welcome) welcome.style.display = "none";
+
   const el = $("#results-section");
   if (!el) return;
   el.style.display = "block";
@@ -366,35 +421,30 @@ function showResults(result) {
     })
     .join("");
 
-  // Click to open
-  fileList.querySelectorAll(".result-file").forEach((el) => {
-    el.addEventListener("click", () => {
-      api.openFile(el.dataset.path);
+  fileList.querySelectorAll(".result-file").forEach((item) => {
+    item.addEventListener("click", () => {
+      api.openFile(item.dataset.path);
     });
   });
 }
 
 function switchTab(tab) {
   $$(".tab-btn").forEach((b) => b.classList.remove("active"));
-  $(`#tab-${tab}`)?.classList.add("active");
-  $$(".tab-content").forEach((c) => (c.style.display = "none"));
-  $(`#content-${tab}`)?.style.display = "block";
+  const activeTab = $(`#tab-${tab}`);
+  if (activeTab) activeTab.classList.add("active");
+  $$(".tab-content").forEach((c) => { c.style.display = "none"; });
+  const activeContent = $(`#content-${tab}`);
+  if (activeContent) activeContent.style.display = "block";
 }
 
 async function handleOpenEditor() {
-  // Open editor in new window
   window.open("editor.html", "_blank", "width=1100,height=750");
 }
 
 function getFileIcon(ext) {
   const icons = {
-    pdf: "\u{1F4C4}",
-    docx: "\u{1F4DD}",
-    hwpx: "\u{1F4D1}",
-    xlsx: "\u{1F4CA}",
-    pptx: "\u{1F4CA}",
-    html: "\u{1F310}",
-    md: "\u{1F4D6}",
+    pdf: "\u{1F4C4}", docx: "\u{1F4DD}", hwpx: "\u{1F4D1}",
+    xlsx: "\u{1F4CA}", pptx: "\u{1F4CA}", html: "\u{1F310}", md: "\u{1F4D6}",
   };
   return icons[ext] || "\u{1F4C1}";
 }

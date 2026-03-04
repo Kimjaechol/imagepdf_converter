@@ -112,17 +112,15 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
     let mut is_italic = false;
     let mut is_underline = false;
     let mut heading_level: Option<u8> = None;
-    let mut in_table = false;
-    let mut in_table_row = false;
     let mut in_table_cell = false;
     let mut text_buf = String::new();
-    let mut in_hyperlink = false;
-    let mut _image_idx = 0;
+    let mut image_idx = 0usize;
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local = local_name(e.name().as_ref());
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
                 match local {
                     "p" => {
                         in_paragraph = true;
@@ -162,29 +160,23 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
                         }
                     }
                     "tbl" => {
-                        in_table = true;
                         html.push_str("<table>\n");
                     }
                     "tr" => {
-                        in_table_row = true;
                         html.push_str("<tr>");
                     }
                     "tc" => {
                         in_table_cell = true;
                         html.push_str("<td>");
                     }
-                    "hyperlink" => {
-                        in_hyperlink = true;
-                    }
                     "drawing" | "pict" => {
-                        // Image reference
-                        if !images.is_empty() && _image_idx < images.len() {
-                            let (name, _) = &images[_image_idx];
+                        if image_idx < images.len() {
+                            let (name, _) = &images[image_idx];
                             text_buf.push_str(&format!(
                                 "<img src=\"{}_images/{}\" alt=\"{}\">",
                                 "", name, name
                             ));
-                            _image_idx += 1;
+                            image_idx += 1;
                         }
                     }
                     "br" => {
@@ -221,7 +213,8 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
                 }
             }
             Ok(Event::End(ref e)) => {
-                let local = local_name(e.name().as_ref());
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
                 match local {
                     "p" => {
                         if !text_buf.trim().is_empty() || in_table_cell {
@@ -247,19 +240,14 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
                         is_underline = false;
                     }
                     "tbl" => {
-                        in_table = false;
                         html.push_str("</table>\n");
                     }
                     "tr" => {
-                        in_table_row = false;
                         html.push_str("</tr>\n");
                     }
                     "tc" => {
                         in_table_cell = false;
                         html.push_str("</td>");
-                    }
-                    "hyperlink" => {
-                        in_hyperlink = false;
                     }
                     _ => {}
                 }
@@ -273,11 +261,6 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
         }
         buf.clear();
     }
-
-    // Suppress unused warnings
-    let _ = in_hyperlink;
-    let _ = in_table;
-    let _ = in_table_row;
 
     html
 }

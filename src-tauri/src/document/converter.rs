@@ -1,7 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::Path;
+use std::sync::OnceLock;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct ConvertResult {
     pub html: Option<String>,
     pub markdown: Option<String>,
@@ -191,7 +192,8 @@ fn html_to_markdown(html: &str) -> String {
         }
     }
 
-    // Clean up excessive newlines
-    let re = regex::Regex::new(r"\n{3,}").unwrap();
+    // Clean up excessive newlines (compile regex once)
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\n{3,}").unwrap());
     re.replace_all(&md, "\n\n").trim().to_string()
 }

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::OnceLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
@@ -16,19 +16,21 @@ pub fn get_port() -> u16 {
     *BACKEND_PORT.get_or_init(|| portpicker::pick_unused_port().unwrap_or(8765))
 }
 
+/// Resolve the resource directory, falling back to current dir
+fn resolve_resource_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .resource_dir()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
 /// Find Python executable - bundled portable or system
 fn find_python(app: &AppHandle) -> PathBuf {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_default();
+    let resource_dir = resolve_resource_dir(app);
+
+    let python_bin = if cfg!(windows) { "python.exe" } else { "bin/python3" };
 
     // 1. Bundled portable Python (packaged app)
-    let bundled = resource_dir.join("portable_python").join(if cfg!(windows) {
-        "python.exe"
-    } else {
-        "bin/python3"
-    });
+    let bundled = resource_dir.join("portable_python").join(python_bin);
     if bundled.exists() {
         tracing::info!("Using bundled Python: {:?}", bundled);
         return bundled;
@@ -39,7 +41,7 @@ fn find_python(app: &AppHandle) -> PathBuf {
         .join("..")
         .join("build_output")
         .join("portable_python")
-        .join(if cfg!(windows) { "python.exe" } else { "bin/python3" });
+        .join(python_bin);
     if dev_portable.exists() {
         tracing::info!("Using dev portable Python: {:?}", dev_portable);
         return dev_portable;
@@ -51,27 +53,23 @@ fn find_python(app: &AppHandle) -> PathBuf {
     PathBuf::from(system_python)
 }
 
-/// Find the backend directory
+/// Find the backend directory containing backend/ and config/
 fn find_backend_dir(app: &AppHandle) -> PathBuf {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_default();
+    let resource_dir = resolve_resource_dir(app);
 
     // Packaged: resources/backend/
-    let packaged = resource_dir.join("backend");
-    if packaged.exists() {
-        return resource_dir.to_path_buf();
+    if resource_dir.join("backend").exists() {
+        return resource_dir;
     }
 
-    // Dev: project root
-    let dev = resource_dir.join("..").join("backend");
-    if dev.exists() {
-        return resource_dir.join("..");
+    // Dev: project root (resource_dir/../)
+    let parent = resource_dir.join("..");
+    if parent.join("backend").exists() {
+        return parent;
     }
 
     // Fallback: current directory
-    std::env::current_dir().unwrap_or_default()
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
@@ -83,20 +81,14 @@ pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
 
     tracing::info!(
         "Starting backend: python={:?}, dir={:?}, port={}",
-        python,
-        backend_dir,
-        port
+        python, backend_dir, port
     );
 
     let child = Command::new(&python)
         .args([
-            "-m",
-            "uvicorn",
-            "backend.server:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
+            "-m", "uvicorn", "backend.server:app",
+            "--host", "127.0.0.1",
+            "--port", &port.to_string(),
         ])
         .current_dir(&backend_dir)
         .env("PIPELINE_CONFIG", &config_path)

@@ -1,7 +1,6 @@
-use crate::document::converter;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct DocConvertResult {
     pub html: Option<String>,
     pub markdown: Option<String>,
@@ -68,7 +67,7 @@ async fn do_convert(
     });
 
     let fmt_strings: Vec<String> = formats.iter().map(|s| s.to_string()).collect();
-    let result = converter::convert_file(input_path, &out_dir, &fmt_strings).await?;
+    let result = crate::document::converter::convert_file(input_path, &out_dir, &fmt_strings).await?;
 
     Ok(DocConvertResult {
         html: result.html,

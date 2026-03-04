@@ -1,6 +1,6 @@
 /**
  * Tauri API Bridge - Backend communication layer
- * Replaces Electron preload.js with Tauri invoke calls
+ * Uses Tauri v2 __TAURI__ global API (withGlobalTauri: true)
  */
 
 const { invoke } = window.__TAURI__.core;
@@ -18,26 +18,11 @@ export async function getBackendUrl() {
 }
 
 // ─── File Operations ───────────────────────────────────
-export async function selectFile(filters) {
-  const result = await openDialog({
-    multiple: false,
-    filters: filters || [
-      { name: "PDF 파일", extensions: ["pdf"] },
-      { name: "문서 파일", extensions: ["pdf", "docx", "hwpx", "xlsx", "pptx"] },
-      { name: "모든 파일", extensions: ["*"] },
-    ],
-  });
-  return result; // string path or null
-}
-
 export async function selectDocumentFile() {
   return await openDialog({
     multiple: false,
     filters: [
-      {
-        name: "지원 문서",
-        extensions: ["pdf", "docx", "hwpx", "xlsx", "pptx"],
-      },
+      { name: "지원 문서", extensions: ["pdf", "docx", "hwpx", "xlsx", "pptx"] },
       { name: "PDF", extensions: ["pdf"] },
       { name: "Word", extensions: ["docx"] },
       { name: "한글", extensions: ["hwpx"] },
@@ -114,26 +99,28 @@ export async function convertBatch(folderPath, outputDir, formats, recursive) {
   });
 }
 
-// ─── Document Conversion (Rust Native) ────────────────
+// ─── Document Conversion (Unified) ────────────────────
+// Routes to Rust-native (docx/hwpx/xlsx/pptx) or Python pipeline (pdf)
 export async function convertDocument(inputPath, outputDir, formats) {
-  return await invoke("convert_any_document", {
-    inputPath,
-    outputDir: outputDir || null,
+  return await invoke("convert_document", {
+    input_path: inputPath,
+    output_dir: outputDir || null,
     formats: formats || ["html", "markdown"],
   });
 }
 
-export async function convertAny(inputPath, outputDir, formats) {
-  return await invoke("convert_document", {
-    inputPath,
-    outputDir: outputDir || null,
+// Rust-native only (docx/hwpx/xlsx/pptx)
+export async function convertNativeDocument(inputPath, outputDir, formats) {
+  return await invoke("convert_any_document", {
+    input_path: inputPath,
+    output_dir: outputDir || null,
     formats: formats || ["html", "markdown"],
   });
 }
 
 // ─── Job Management ───────────────────────────────────
 export async function getJobStatus(jobId) {
-  return await invoke("get_job_status", { jobId });
+  return await invoke("get_job_status", { job_id: jobId });
 }
 
 export async function listJobs() {
@@ -177,6 +164,10 @@ export async function moaSupportedFormats() {
   return await invoke("moa_supported_formats");
 }
 
+export async function moaToolManifest() {
+  return await invoke("moa_tool_manifest");
+}
+
 // ─── WebSocket Progress ──────────────────────────────
 export function connectProgress(jobId, onMessage) {
   return new Promise((resolve) => {
@@ -201,7 +192,7 @@ export function connectProgress(jobId, onMessage) {
 
 // ─── Utility ─────────────────────────────────────────
 export function getFileExtension(path) {
-  return path.split(".").pop().toLowerCase();
+  return (path || "").split(".").pop().toLowerCase();
 }
 
 export function isRustNativeFormat(ext) {

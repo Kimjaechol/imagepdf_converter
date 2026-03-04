@@ -131,9 +131,7 @@ fn parse_slide_xml(xml: &str) -> String {
     let mut buf = Vec::new();
     let mut html = String::new();
 
-    let mut text_parts: Vec<String> = Vec::new();
     let mut in_text_body = false;
-    let mut in_paragraph = false;
     let mut in_run = false;
     let mut is_bold = false;
     let mut is_title = false;
@@ -145,14 +143,13 @@ fn parse_slide_xml(xml: &str) -> String {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local = local_name(e.name().as_ref());
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
                 match local {
                     "txBody" => {
                         in_text_body = true;
-                        text_parts.clear();
                     }
                     "p" if in_text_body => {
-                        in_paragraph = true;
                         current_text.clear();
                         is_bold = false;
                         is_list_item = false;
@@ -208,7 +205,8 @@ fn parse_slide_xml(xml: &str) -> String {
                 }
             }
             Ok(Event::End(ref e)) => {
-                let local = local_name(e.name().as_ref());
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
                 match local {
                     "txBody" => {
                         in_text_body = false;
@@ -241,7 +239,6 @@ fn parse_slide_xml(xml: &str) -> String {
                             }
                         }
                         current_text.clear();
-                        in_paragraph = false;
                         is_list_item = false;
                         list_level = -1;
                     }
@@ -262,7 +259,6 @@ fn parse_slide_xml(xml: &str) -> String {
         buf.clear();
     }
 
-    let _ = in_paragraph;
     html
 }
 
