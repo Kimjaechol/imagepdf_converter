@@ -19,9 +19,9 @@ from threading import Lock
 
 logger = logging.getLogger(__name__)
 
-# Gemini 3.1 Flash-Lite pricing (USD per 1 million tokens)
-_DEFAULT_INPUT_COST = 0.25
-_DEFAULT_OUTPUT_COST = 1.50
+# Gemini 3.1 Flash-Lite official API pricing (USD per 1 million tokens)
+_DEFAULT_INPUT_COST = 0.50
+_DEFAULT_OUTPUT_COST = 3.00
 _DEFAULT_MARKUP = 2.2
 
 
@@ -105,9 +105,9 @@ class CreditService:
 
     def check_sufficient_balance(self, user_id: str, estimated_pages: int) -> bool:
         """Check if user has enough credits for an estimated conversion."""
-        # Rough estimate: ~7,900 tokens per page (input+output)
-        estimated_input = estimated_pages * 5_500
-        estimated_output = estimated_pages * 2_400
+        # Per page: ~2,610 input tokens, ~1,130 output tokens
+        estimated_input = estimated_pages * 2_610
+        estimated_output = estimated_pages * 1_130
         raw_cost = (
             estimated_input / 1_000_000 * self.input_cost
             + estimated_output / 1_000_000 * self.output_cost
@@ -155,8 +155,8 @@ class CreditService:
 
     def estimate_cost(self, num_pages: int) -> dict:
         """Estimate the user-facing cost for converting *num_pages* pages."""
-        estimated_input = num_pages * 5_500
-        estimated_output = num_pages * 2_400
+        estimated_input = num_pages * 2_610
+        estimated_output = num_pages * 1_130
         raw_cost = (
             estimated_input / 1_000_000 * self.input_cost
             + estimated_output / 1_000_000 * self.output_cost
