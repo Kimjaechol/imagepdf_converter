@@ -51,7 +51,7 @@ class ReadingOrderRefiner:
         self,
         mode: str = "hybrid",
         vlm_provider: str = "gemini",
-        gemini_model: str = "gemini-2.5-flash",
+        gemini_model: str = "gemini-3.1-flash-lite",
         ollama_model: str = "qwen2.5:7b",
         ollama_base_url: str = "http://localhost:11434",
     ):

@@ -63,6 +63,13 @@ fn main() {
             // Backend lifecycle
             commands::backend_cmd::restart_backend,
             commands::backend_cmd::backend_health,
+            // Credits & API key
+            commands::credit_cmd::set_api_key,
+            commands::credit_cmd::get_api_key_status,
+            commands::credit_cmd::get_credits,
+            commands::credit_cmd::purchase_credits,
+            commands::credit_cmd::estimate_cost,
+            commands::credit_cmd::get_credit_history,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

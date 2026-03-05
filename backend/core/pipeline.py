@@ -51,11 +51,11 @@ class PipelineConfig:
     merge_multipage_tables: bool = True
     reading_order_mode: str = "hybrid"
     reading_order_vlm: str = "gemini"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.1-flash-lite"
     ollama_model: str = "qwen2.5:7b"
     ollama_base_url: str = "http://localhost:11434"
     heading_mode: str = "hybrid"
-    heading_llm: str = "ollama"
+    heading_llm: str = "gemini"
     heading_ollama_model: str = "qwen2.5:0.5b-instruct"
     correction_mode: str = "hybrid"
     correction_llm: str = "gemini"
@@ -94,7 +94,7 @@ class PipelineConfig:
             merge_multipage_tables=table.get("merge_multipage", True),
             reading_order_mode=ro.get("mode", "hybrid"),
             reading_order_vlm=ro.get("vlm_provider", "gemini"),
-            gemini_model=ro.get("gemini_model", "gemini-2.5-flash"),
+            gemini_model=ro.get("gemini_model", "gemini-3.1-flash-lite"),
             ollama_model=ro.get("ollama_model", "qwen2.5:7b"),
             ollama_base_url=models.get("ollama_base_url", "http://localhost:11434"),
             heading_mode=head.get("mode", "hybrid"),
@@ -146,6 +146,7 @@ class Pipeline:
             llm_provider=self.cfg.heading_llm,
             ollama_model=self.cfg.heading_ollama_model,
             ollama_base_url=self.cfg.ollama_base_url,
+            gemini_model=self.cfg.gemini_model,
         )
         self.correction = CorrectionEngine(
             dictionary_path=self.cfg.correction_dict_path,

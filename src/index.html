@@ -148,6 +148,47 @@
         </select>
       </div>
 
+      <div class="section-label" style="margin-top:20px">AI 설정 (운영자)</div>
+
+      <div class="setting-group">
+        <label>Gemini API Key</label>
+        <div style="display:flex;gap:4px">
+          <input type="password" id="set-api-key" placeholder="API 키 입력" class="setting-input" style="flex:1">
+          <button id="btn-save-api-key" class="btn btn-sm">저장</button>
+        </div>
+        <div id="api-key-status" class="setting-hint"></div>
+      </div>
+
+      <div class="section-label" style="margin-top:20px">크레딧 관리</div>
+
+      <div class="setting-group">
+        <label>사용자 ID</label>
+        <input type="text" id="credit-user-id" value="default" class="setting-input">
+      </div>
+
+      <div class="setting-group">
+        <label>잔액</label>
+        <div id="credit-balance" class="setting-hint" style="font-size:16px;font-weight:bold">$0.00</div>
+      </div>
+
+      <div class="setting-group">
+        <label>크레딧 충전 (USD)</label>
+        <div style="display:flex;gap:4px">
+          <input type="number" id="credit-amount" value="5.00" min="0.01" step="0.01" class="setting-input" style="flex:1">
+          <button id="btn-purchase-credit" class="btn btn-sm">충전</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>비용 추산</label>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input type="number" id="estimate-pages" value="100" min="1" class="setting-input" style="flex:1">
+          <span>페이지</span>
+          <button id="btn-estimate-cost" class="btn btn-sm">추산</button>
+        </div>
+        <div id="cost-estimate-result" class="setting-hint"></div>
+      </div>
+
       <div class="section-label" style="margin-top:20px">도구</div>
       <button id="btn-restart-backend" class="btn btn-outline btn-full">백엔드 재시작</button>
       <button id="btn-open-editor" class="btn btn-outline btn-full" style="margin-top:8px">HTML 에디터</button>

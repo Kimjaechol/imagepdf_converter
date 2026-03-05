@@ -112,6 +112,20 @@ function setupEventListeners() {
   // Settings apply
   setupSettingsListeners();
 
+  // API Key
+  $("#btn-save-api-key")?.addEventListener("click", handleSaveApiKey);
+
+  // Credits
+  $("#btn-purchase-credit")?.addEventListener("click", handlePurchaseCredit);
+  $("#btn-estimate-cost")?.addEventListener("click", handleEstimateCost);
+
+  // Load API key status and credits on settings tab
+  $("#tab-settings")?.addEventListener("click", () => {
+    switchTab("settings");
+    loadApiKeyStatus();
+    loadCreditBalance();
+  });
+
   // Backend restart
   $("#btn-restart-backend")?.addEventListener("click", async () => {
     showStatus("백엔드 재시작 중...", "info");
@@ -447,4 +461,82 @@ function getFileIcon(ext) {
     xlsx: "\u{1F4CA}", pptx: "\u{1F4CA}", html: "\u{1F310}", md: "\u{1F4D6}",
   };
   return icons[ext] || "\u{1F4C1}";
+}
+
+// ─── API Key Management ─────────────────────────────────
+async function loadApiKeyStatus() {
+  try {
+    const status = await api.getApiKeyStatus();
+    const el = $("#api-key-status");
+    if (el) {
+      el.textContent = status.configured
+        ? `설정됨: ${status.masked}`
+        : "미설정 (Gemini AI 기능 비활성)";
+      el.style.color = status.configured ? "#4caf50" : "#f44336";
+    }
+  } catch {
+    // Backend may not support this yet
+  }
+}
+
+async function handleSaveApiKey() {
+  const input = $("#set-api-key");
+  if (!input || !input.value.trim()) return;
+  try {
+    await api.setApiKey(input.value.trim());
+    input.value = "";
+    showStatus("API 키 저장 완료", "success");
+    loadApiKeyStatus();
+  } catch (e) {
+    showStatus(`API 키 저장 실패: ${e}`, "error");
+  }
+}
+
+// ─── Credit Management ──────────────────────────────────
+async function loadCreditBalance() {
+  try {
+    const userId = $("#credit-user-id")?.value || "default";
+    const info = await api.getCredits(userId);
+    const el = $("#credit-balance");
+    if (el) {
+      el.textContent = `$${info.balance_usd.toFixed(4)}`;
+      el.style.color = info.balance_usd > 0 ? "#4caf50" : "#f44336";
+    }
+  } catch {
+    // Backend may not support this yet
+  }
+}
+
+async function handlePurchaseCredit() {
+  const userId = $("#credit-user-id")?.value || "default";
+  const amount = parseFloat($("#credit-amount")?.value || "0");
+  if (amount <= 0) {
+    showStatus("충전 금액을 입력해주세요", "warning");
+    return;
+  }
+  try {
+    const result = await api.purchaseCredits(userId, amount);
+    showStatus(`$${amount.toFixed(2)} 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)}`, "success");
+    loadCreditBalance();
+  } catch (e) {
+    showStatus(`충전 실패: ${e}`, "error");
+  }
+}
+
+async function handleEstimateCost() {
+  const pages = parseInt($("#estimate-pages")?.value || "0", 10);
+  if (pages <= 0) return;
+  try {
+    const est = await api.estimateCost(pages);
+    const el = $("#cost-estimate-result");
+    if (el) {
+      el.innerHTML = `
+        ${pages}페이지 추산:<br>
+        API 원가: $${est.raw_cost_usd.toFixed(4)}<br>
+        이용자 부과액 (${est.markup}배): <strong>$${est.charged_usd.toFixed(4)}</strong>
+      `;
+    }
+  } catch (e) {
+    showStatus(`추산 실패: ${e}`, "error");
+  }
 }

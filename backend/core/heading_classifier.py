@@ -24,10 +24,10 @@ class HeadingClassifier:
     def __init__(
         self,
         mode: str = "hybrid",
-        llm_provider: str = "ollama",
+        llm_provider: str = "gemini",
         ollama_model: str = "qwen2.5:0.5b-instruct",
         ollama_base_url: str = "http://localhost:11434",
-        gemini_model: str = "gemini-2.5-flash",
+        gemini_model: str = "gemini-3.1-flash-lite",
     ):
         self.mode = mode
         self.llm_provider = llm_provider

@@ -168,6 +168,31 @@ export async function moaToolManifest() {
   return await invoke("moa_tool_manifest");
 }
 
+// ─── API Key & Credits ───────────────────────────────
+export async function setApiKey(apiKey) {
+  return await invoke("set_api_key", { api_key: apiKey });
+}
+
+export async function getApiKeyStatus() {
+  return await invoke("get_api_key_status");
+}
+
+export async function getCredits(userId) {
+  return await invoke("get_credits", { user_id: userId });
+}
+
+export async function purchaseCredits(userId, amountUsd) {
+  return await invoke("purchase_credits", { user_id: userId, amount_usd: amountUsd });
+}
+
+export async function estimateCost(numPages) {
+  return await invoke("estimate_cost", { num_pages: numPages });
+}
+
+export async function getCreditHistory(userId) {
+  return await invoke("get_credit_history", { user_id: userId });
+}
+
 // ─── WebSocket Progress ──────────────────────────────
 export function connectProgress(jobId, onMessage) {
   return new Promise((resolve) => {

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from backend.core.pipeline import Pipeline, PipelineConfig
 from backend.models.schema import PdfJob
+from backend.services.credit_service import CreditService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,6 +38,14 @@ app.add_middleware(
 _config: PipelineConfig | None = None
 _jobs: dict[str, dict[str, Any]] = {}  # job_id -> status
 _websockets: dict[str, WebSocket] = {}
+_credit_service: CreditService | None = None
+
+
+def _get_credit_service() -> CreditService:
+    global _credit_service
+    if _credit_service is None:
+        _credit_service = CreditService(data_dir="data")
+    return _credit_service
 
 
 def _get_config() -> PipelineConfig:
@@ -75,6 +84,19 @@ class ConfigUpdate(BaseModel):
 class CustomTermRequest(BaseModel):
     correct: str
     confused_with: list[str]
+
+
+class SetApiKeyRequest(BaseModel):
+    api_key: str
+
+
+class PurchaseCreditsRequest(BaseModel):
+    user_id: str
+    amount_usd: float
+
+
+class EstimateCostRequest(BaseModel):
+    num_pages: int
 
 
 class JobStatus(BaseModel):
@@ -201,6 +223,75 @@ async def add_dictionary_term(req: CustomTermRequest):
     pipeline.correction.add_custom_term(req.correct, req.confused_with)
     pipeline.correction.save_dictionary(cfg.correction_dict_path)
     return {"status": "ok", "term": req.correct}
+
+
+# ---------------------------------------------------------------------------
+# API Key Management (Operator)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/settings/api-key")
+async def set_api_key(req: SetApiKeyRequest):
+    """Set the Gemini API key (operator only)."""
+    os.environ["GEMINI_API_KEY"] = req.api_key
+    return {"status": "ok", "message": "API key configured"}
+
+
+@app.get("/api/settings/api-key/status")
+async def get_api_key_status():
+    """Check if a Gemini API key is configured."""
+    key = os.environ.get("GEMINI_API_KEY", "")
+    return {
+        "configured": bool(key),
+        "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Credit System
+# ---------------------------------------------------------------------------
+
+@app.get("/api/credits/{user_id}")
+async def get_credits(user_id: str):
+    """Get a user's credit balance."""
+    svc = _get_credit_service()
+    acct = svc.get_or_create_account(user_id)
+    return {
+        "user_id": acct.user_id,
+        "balance_usd": round(acct.balance_usd, 4),
+        "total_purchased_usd": round(acct.total_purchased_usd, 4),
+        "total_consumed_usd": round(acct.total_consumed_usd, 4),
+    }
+
+
+@app.post("/api/credits/purchase")
+async def purchase_credits(req: PurchaseCreditsRequest):
+    """Add credits to a user's balance."""
+    if req.amount_usd <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    svc = _get_credit_service()
+    new_balance = svc.purchase_credits(req.user_id, req.amount_usd)
+    return {
+        "user_id": req.user_id,
+        "amount_usd": req.amount_usd,
+        "new_balance_usd": round(new_balance, 4),
+    }
+
+
+@app.post("/api/credits/estimate")
+async def estimate_cost(req: EstimateCostRequest):
+    """Estimate the credit cost for converting N pages."""
+    svc = _get_credit_service()
+    return svc.estimate_cost(req.num_pages)
+
+
+@app.get("/api/credits/{user_id}/history")
+async def get_credit_history(user_id: str, limit: int = 50):
+    """Get a user's recent credit usage history."""
+    svc = _get_credit_service()
+    acct = svc.get_or_create_account(user_id)
+    history = acct.usage_history[-limit:]
+    history.reverse()
+    return {"user_id": user_id, "history": history}
 
 
 # ---------------------------------------------------------------------------
