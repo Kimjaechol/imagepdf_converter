@@ -1,16 +1,17 @@
-"""Unified Vision Processor – single Gemini API call per page.
+"""Unified Vision Processor – single Gemini API call per page batch.
 
 Instead of separate calls for reading order, heading classification, and text
-correction, this module sends the page image along with any locally-extracted
-text to Gemini 3.1 Flash-Lite in ONE call.  The model performs:
+correction, this module sends page images to Gemini 3.1 Flash-Lite in ONE call.
 
-  1. Layout verification & block detection
-  2. Table structure recognition (cells, headers, merged cells)
-  3. Reading order determination
-  4. Heading level classification
-  5. Text correction (OCR errors, Hanja/Korean, spelling)
+Key optimization: a fast LOCAL pre-scan classifies each page as "text_only" or
+"complex" (has tables, figures, graphs, multi-column).  Pages are then batched
+by type and processed with type-specific prompts:
 
-This reduces API round-trips from 3 to 1 per page, cutting latency by ~60%.
+  - text_only pages:  larger batches (up to 30), lighter prompt, less output
+  - complex pages:    smaller batches (up to 10), full analysis prompt
+
+This reduces output tokens for simple pages and gives more attention to complex
+pages, improving both speed and accuracy.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any
 
 from backend.models.schema import (
@@ -34,10 +36,31 @@ from backend.models.schema import (
 
 logger = logging.getLogger(__name__)
 
-# Maximum pages to batch in a single API call.
-# Gemini 3.1 Flash-Lite supports ~200K context; each page image ≈ 1,500 tokens.
-# 20 images ≈ 30K tokens, well within limits.
-MAX_PAGES_PER_CALL = 20
+# Batch sizes per page type
+_BATCH_TEXT_ONLY = 30   # text-only pages can be batched aggressively
+_BATCH_COMPLEX = 10     # complex pages need more output per page
+
+
+@dataclass
+class PageClassification:
+    """Result of the fast local pre-scan for a single page."""
+    page_index: int
+    has_tables: bool = False
+    has_figures: bool = False
+    has_multi_column: bool = False
+    has_structural_lines: bool = False
+    num_text_blocks: int = 0
+    num_vector_rects: int = 0
+    num_vector_lines: int = 0
+
+    @property
+    def is_complex(self) -> bool:
+        return (
+            self.has_tables
+            or self.has_figures
+            or self.has_multi_column
+            or (self.num_vector_rects > 3)
+        )
 
 
 class UnifiedVisionProcessor:
@@ -60,29 +83,129 @@ class UnifiedVisionProcessor:
     ) -> list[PageResult]:
         """Process multiple pages via unified Gemini Vision call(s).
 
-        *page_data_list*: list of dicts with keys:
-            page_index, image_path, width, height, digital_blocks, lines
-
-        *ocr_blocks_per_page*: optional pre-extracted OCR text per page
-            (from Surya or digital extraction).  If provided, Gemini will
-            verify / correct this text instead of doing full OCR.
-
-        Returns list of PageResult with fully populated blocks.
+        1. Fast local pre-scan to classify pages
+        2. Separate into text_only vs complex batches
+        3. Send each batch with type-specific prompt
         """
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             logger.warning("GEMINI_API_KEY not set; unified vision mode unavailable.")
             return []
 
+        ocr_blocks = ocr_blocks_per_page or {}
+
+        # Step 1: Fast local pre-scan
+        classifications = self._prescan_pages(page_data_list)
+
+        # Step 2: Split by type
+        text_only_pages = []
+        complex_pages = []
+        for pd in page_data_list:
+            cls = classifications.get(pd["page_index"])
+            if cls and cls.is_complex:
+                complex_pages.append(pd)
+            else:
+                text_only_pages.append(pd)
+
+        logger.info(
+            "Pre-scan: %d text-only, %d complex pages",
+            len(text_only_pages), len(complex_pages),
+        )
+
         results: list[PageResult] = []
 
-        # Batch pages into groups for efficient API usage
-        for i in range(0, len(page_data_list), MAX_PAGES_PER_CALL):
-            batch = page_data_list[i : i + MAX_PAGES_PER_CALL]
+        # Step 3a: Process text-only pages in large batches
+        for i in range(0, len(text_only_pages), _BATCH_TEXT_ONLY):
+            batch = text_only_pages[i : i + _BATCH_TEXT_ONLY]
             batch_results = self._process_batch(
-                batch, ocr_blocks_per_page or {}, api_key
+                batch, ocr_blocks, api_key, page_type="text_only",
+                classifications=classifications,
             )
             results.extend(batch_results)
+
+        # Step 3b: Process complex pages in smaller batches
+        for i in range(0, len(complex_pages), _BATCH_COMPLEX):
+            batch = complex_pages[i : i + _BATCH_COMPLEX]
+            batch_results = self._process_batch(
+                batch, ocr_blocks, api_key, page_type="complex",
+                classifications=classifications,
+            )
+            results.extend(batch_results)
+
+        # Sort results by page_index to restore original order
+        results.sort(key=lambda pr: pr.page_index)
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Fast local pre-scan (NO API call, pure local analysis)
+    # ------------------------------------------------------------------
+
+    def _prescan_pages(
+        self, page_data_list: list[dict],
+    ) -> dict[int, PageClassification]:
+        """Classify each page locally by analyzing vector objects and text blocks.
+
+        This is extremely fast (~0.1ms per page) since it only checks metadata
+        already extracted by PageRenderer.
+        """
+        results: dict[int, PageClassification] = {}
+
+        for pd in page_data_list:
+            page_idx = pd["page_index"]
+            lines = pd.get("lines", [])
+            digital_blocks = pd.get("digital_blocks", [])
+            width = pd["width"]
+
+            cls = PageClassification(page_index=page_idx)
+            cls.num_text_blocks = len(digital_blocks)
+
+            # Count vector objects
+            structural_lines = 0
+            rects = 0
+            for ln in lines:
+                if ln["type"] == "rect":
+                    rects += 1
+                    rw = abs(ln["x1"] - ln["x0"])
+                    rh = abs(ln["y1"] - ln["y0"])
+                    # Large rect likely a figure placeholder
+                    if rw > width * 0.3 and rh > width * 0.2:
+                        cls.has_figures = True
+                elif ln["type"] == "line" and ln.get("line_class") == "structural":
+                    structural_lines += 1
+
+            cls.num_vector_rects = rects
+            cls.num_vector_lines = structural_lines
+            cls.has_structural_lines = structural_lines > 0
+
+            # Tables: 4+ structural lines + 2+ rects = likely a table
+            if structural_lines >= 4 and rects >= 2:
+                cls.has_tables = True
+            elif rects >= 4:
+                cls.has_tables = True
+
+            # Multi-column: check if text blocks cluster into left/right halves
+            if len(digital_blocks) >= 4:
+                mid = width / 2
+                left_count = sum(
+                    1 for b in digital_blocks
+                    if b.bbox and b.bbox.center_x < mid * 0.85
+                    and b.bbox.width < width * 0.6
+                )
+                right_count = sum(
+                    1 for b in digital_blocks
+                    if b.bbox and b.bbox.center_x > mid * 1.15
+                    and b.bbox.width < width * 0.6
+                )
+                if left_count >= 2 and right_count >= 2:
+                    cls.has_multi_column = True
+
+            # Image-only PDF page (no digital text, probably scanned)
+            # → treat as complex since Gemini must do OCR
+            if cls.num_text_blocks == 0:
+                cls.has_figures = True
+
+            results[page_idx] = cls
 
         return results
 
@@ -95,8 +218,13 @@ class UnifiedVisionProcessor:
         page_data_list: list[dict],
         ocr_blocks: dict[int, list[LayoutBlock]],
         api_key: str,
+        page_type: str = "complex",
+        classifications: dict[int, PageClassification] | None = None,
     ) -> list[PageResult]:
         """Send a batch of pages to Gemini in a single API call."""
+        if not page_data_list:
+            return []
+
         try:
             import google.generativeai as genai
             from PIL import Image
@@ -118,7 +246,7 @@ class UnifiedVisionProcessor:
                 img = Image.open(img_path)
                 parts.append(img)
 
-                # Build text context for this page
+                # Build text context + classification hints for this page
                 existing_text = ""
                 if page_idx in ocr_blocks and ocr_blocks[page_idx]:
                     text_parts = []
@@ -130,15 +258,34 @@ class UnifiedVisionProcessor:
                             text_parts.append(f"  - \"{b.text[:200]}\"{bbox_str}")
                     existing_text = "\n".join(text_parts)
 
+                # Add 0/1 complexity tag + detail hints
+                # 0 = text only, 1 = complex (tables/figures/graphs/equations)
+                cls = (classifications or {}).get(page_idx)
+                tag = 1 if (cls and cls.is_complex) else 0
+                detail_hints = []
+                if cls:
+                    if cls.has_tables:
+                        detail_hints.append("TABLE")
+                    if cls.has_figures:
+                        detail_hints.append("FIGURE")
+                    if cls.has_multi_column:
+                        detail_hints.append("MULTI_COL")
+                    if cls.num_text_blocks == 0:
+                        detail_hints.append("IMAGE_ONLY")
+                hints = f"  [TAG={tag}]"
+                if detail_hints:
+                    hints += " " + ",".join(detail_hints)
+
                 page_infos.append({
                     "page_index": page_idx,
                     "width": width,
                     "height": height,
                     "existing_text": existing_text,
+                    "hints": hints,
                 })
 
-            # Add the unified prompt
-            prompt = self._build_unified_prompt(page_infos)
+            # Build type-specific prompt
+            prompt = self._build_prompt(page_infos, page_type)
             parts.append(prompt)
 
             # Call Gemini
@@ -151,34 +298,90 @@ class UnifiedVisionProcessor:
             return []
 
     # ------------------------------------------------------------------
-    # Prompt
+    # Prompts (type-specific)
     # ------------------------------------------------------------------
 
-    def _build_unified_prompt(self, page_infos: list[dict]) -> str:
+    def _build_prompt(self, page_infos: list[dict], page_type: str) -> str:
+        if page_type == "text_only":
+            return self._build_text_only_prompt(page_infos)
+        return self._build_complex_prompt(page_infos)
+
+    def _build_text_only_prompt(self, page_infos: list[dict]) -> str:
+        """Lighter prompt for text-only pages – no table schema needed."""
         pages_desc = []
         for pi in page_infos:
-            desc = f"Page {pi['page_index']} ({pi['width']:.0f}x{pi['height']:.0f}px)"
+            desc = f"Page {pi['page_index']} {pi['hints']} ({pi['width']:.0f}x{pi['height']:.0f}px)"
             if pi["existing_text"]:
-                desc += f":\n  OCR text (may contain errors):\n{pi['existing_text']}"
+                desc += f":\n  OCR text (verify/correct):\n{pi['existing_text']}"
             pages_desc.append(desc)
 
         pages_section = "\n\n".join(pages_desc)
 
-        return f"""You are an expert document analyzer. For each page image provided, perform ALL of the following tasks in a single analysis:
+        return f"""Analyze each page image below.
 
-1. **Layout Detection**: Identify every content block (paragraphs, headings, tables, figures, captions, footnotes, page numbers, headers, footers).
-2. **Table Recognition**: For any table, extract the full cell structure (row, col, rowspan, colspan, text, is_header).
-3. **Reading Order**: Determine the natural reading order. Structural lines (borders, separators) define reading zones. Read each zone top-to-bottom, left-to-right. Multi-column layouts: left column first, then right. Footnotes come after body.
-4. **Heading Classification**: Classify heading levels (h1-h6). Korean patterns like "제1장", "제1절" are typically h2 or h3. Levels must not skip.
-5. **Text Correction**: Fix OCR errors, especially:
-   - Korean Hanja (甲→甲, 乙→乙, etc. in legal/exam contexts)
-   - Confused characters (갑/甲, 을/乙)
-   - Spelling and spacing errors in Korean text
-   - If existing OCR text is provided, verify and correct it against the image.
+Each page has a [TAG=0] or [TAG=1] label:
+  TAG=0 → Text-only page (no tables, figures, or complex layout)
+  TAG=1 → Complex page (may contain tables, figures, graphs, equations, multi-column)
+All pages in this batch are TAG=0 (text only).
+
+Tasks:
+1. Extract all text blocks with bbox coordinates.
+2. Classify headings (h1-h6). Korean "제1장"/"제1절" = h2/h3. No level skipping.
+3. Determine reading order (top-to-bottom, left-to-right).
+4. Fix any OCR errors (Korean Hanja, spelling, spacing).
 
 {pages_section}
 
-Return a JSON object with this exact structure:
+Return JSON:
+{{
+  "pages": [
+    {{
+      "page_index": 0,
+      "blocks": [
+        {{
+          "id": "p0_b0",
+          "type": "heading|paragraph|footnote|header|footer|page_number|list",
+          "text": "corrected text",
+          "bbox": [x0, y0, x1, y1],
+          "reading_order": 0,
+          "heading_level": "h1|h2|h3|h4|h5|h6|none",
+          "style": {{"bold": false, "italic": false, "font_size_relative": "large|normal|small", "alignment": "left|center|right"}}
+        }}
+      ]
+    }}
+  ]
+}}
+
+Return ONLY valid JSON. No fences. Include ALL visible text."""
+
+    def _build_complex_prompt(self, page_infos: list[dict]) -> str:
+        """Full prompt for complex pages with tables/figures/multi-column."""
+        pages_desc = []
+        for pi in page_infos:
+            desc = f"Page {pi['page_index']} {pi['hints']} ({pi['width']:.0f}x{pi['height']:.0f}px)"
+            if pi["existing_text"]:
+                desc += f":\n  OCR text (verify/correct):\n{pi['existing_text']}"
+            pages_desc.append(desc)
+
+        pages_section = "\n\n".join(pages_desc)
+
+        return f"""Analyze each page image below.
+
+Each page has a [TAG=0] or [TAG=1] label:
+  TAG=0 → Text-only page (no tables, figures, or complex layout)
+  TAG=1 → Complex page (may contain tables, figures, graphs, equations, multi-column)
+All pages in this batch are TAG=1 (complex). Pay extra attention to layout structure.
+
+Tasks:
+1. **Layout Detection**: Identify every block (paragraphs, headings, tables, figures, captions, footnotes, page numbers, headers, footers).
+2. **Table Recognition**: For EVERY table, extract full cell structure (row, col, rowspan, colspan, text, is_header). This is critical.
+3. **Reading Order**: Structural lines (borders, separators) define reading zones. Read each zone completely before the next. Multi-column: left first, then right. Footnotes come last.
+4. **Heading Classification**: h1-h6. Korean "제1장"/"제1절" = h2/h3. No level skipping.
+5. **Text Correction**: Fix OCR errors (Hanja 甲乙丙丁, Korean spelling/spacing).
+
+{pages_section}
+
+Return JSON:
 {{
   "pages": [
     {{
@@ -187,16 +390,11 @@ Return a JSON object with this exact structure:
         {{
           "id": "p0_b0",
           "type": "heading|paragraph|table|figure|caption|footnote|header|footer|page_number|list",
-          "text": "corrected text content",
+          "text": "corrected text",
           "bbox": [x0, y0, x1, y1],
           "reading_order": 0,
           "heading_level": "h1|h2|h3|h4|h5|h6|none",
-          "style": {{
-            "bold": false,
-            "italic": false,
-            "font_size_relative": "large|normal|small",
-            "alignment": "left|center|right"
-          }},
+          "style": {{"bold": false, "italic": false, "font_size_relative": "large|normal|small", "alignment": "left|center|right"}},
           "table": null
         }},
         {{
@@ -208,10 +406,9 @@ Return a JSON object with this exact structure:
           "heading_level": "none",
           "style": null,
           "table": {{
-            "rows": 3,
-            "cols": 4,
+            "rows": 3, "cols": 4,
             "cells": [
-              {{"row": 0, "col": 0, "rowspan": 1, "colspan": 1, "text": "header text", "is_header": true}}
+              {{"row": 0, "col": 0, "rowspan": 1, "colspan": 1, "text": "header", "is_header": true}}
             ]
           }}
         }}
@@ -220,12 +417,11 @@ Return a JSON object with this exact structure:
   ]
 }}
 
-CRITICAL RULES:
-- bbox coordinates are in pixels matching the page dimensions given above.
-- reading_order is a zero-based integer indicating the natural reading sequence.
-- Return ONLY valid JSON. No markdown fences, no explanation.
-- Include ALL text visible on the page. Do not omit any content.
-- For tables, include EVERY cell with its exact row/col position."""
+CRITICAL:
+- bbox in pixels matching page dimensions above.
+- Include ALL text. Do not omit any content.
+- For tables, include EVERY cell with exact row/col position.
+- Return ONLY valid JSON. No markdown fences."""
 
     # ------------------------------------------------------------------
     # Response parsing
@@ -239,7 +435,6 @@ CRITICAL RULES:
         """Parse the unified JSON response into PageResult objects."""
         try:
             text = response_text.strip()
-            # Strip markdown code fences if present
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
             elif "```" in text:
@@ -248,7 +443,6 @@ CRITICAL RULES:
             data = json.loads(text)
             pages_data = data.get("pages", [])
 
-            # Build a lookup for page dimensions
             page_dims = {
                 pd["page_index"]: (pd["width"], pd["height"])
                 for pd in page_data_list
@@ -297,12 +491,9 @@ CRITICAL RULES:
         }
 
         level_map = {
-            "h1": HeadingLevel.H1,
-            "h2": HeadingLevel.H2,
-            "h3": HeadingLevel.H3,
-            "h4": HeadingLevel.H4,
-            "h5": HeadingLevel.H5,
-            "h6": HeadingLevel.H6,
+            "h1": HeadingLevel.H1, "h2": HeadingLevel.H2,
+            "h3": HeadingLevel.H3, "h4": HeadingLevel.H4,
+            "h5": HeadingLevel.H5, "h6": HeadingLevel.H6,
             "none": HeadingLevel.NONE,
         }
 
@@ -317,10 +508,8 @@ CRITICAL RULES:
             bbox = None
             if bbox_raw and len(bbox_raw) == 4:
                 bbox = BBox(
-                    x0=float(bbox_raw[0]),
-                    y0=float(bbox_raw[1]),
-                    x1=float(bbox_raw[2]),
-                    y1=float(bbox_raw[3]),
+                    x0=float(bbox_raw[0]), y0=float(bbox_raw[1]),
+                    x1=float(bbox_raw[2]), y1=float(bbox_raw[3]),
                 )
 
             block_type = type_map.get(bj.get("type", ""), BlockType.PARAGRAPH)
@@ -328,7 +517,6 @@ CRITICAL RULES:
                 bj.get("heading_level", "none"), HeadingLevel.NONE
             )
 
-            # Parse style
             style = TextStyle()
             style_json = bj.get("style")
             if style_json:
@@ -345,17 +533,14 @@ CRITICAL RULES:
                     style_json.get("alignment", "left"), Alignment.LEFT
                 )
 
-            # Parse table structure
             table_structure = None
             table_json = bj.get("table")
             if table_json and block_type == BlockType.TABLE:
                 cells = []
                 for cj in table_json.get("cells", []):
                     cells.append(TableCell(
-                        row=cj.get("row", 0),
-                        col=cj.get("col", 0),
-                        rowspan=cj.get("rowspan", 1),
-                        colspan=cj.get("colspan", 1),
+                        row=cj.get("row", 0), col=cj.get("col", 0),
+                        rowspan=cj.get("rowspan", 1), colspan=cj.get("colspan", 1),
                         text=cj.get("text", ""),
                         is_header=cj.get("is_header", False),
                     ))
@@ -367,13 +552,9 @@ CRITICAL RULES:
                     bbox=bbox,
                 )
 
-            # Determine role
             role = "paragraph"
             if block_type == BlockType.HEADING:
-                if heading_level == HeadingLevel.H1:
-                    role = "title"
-                else:
-                    role = "section_heading"
+                role = "title" if heading_level == HeadingLevel.H1 else "section_heading"
             elif block_type == BlockType.CAPTION:
                 role = "caption"
             elif block_type == BlockType.FOOTNOTE:
@@ -394,7 +575,5 @@ CRITICAL RULES:
             )
             blocks.append(block)
 
-        # Sort by reading_order
         blocks.sort(key=lambda b: b.reading_order)
-
         return blocks
