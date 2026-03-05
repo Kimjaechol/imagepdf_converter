@@ -105,9 +105,10 @@ class CreditService:
 
     def check_sufficient_balance(self, user_id: str, estimated_pages: int) -> bool:
         """Check if user has enough credits for an estimated conversion."""
-        # Unified vision mode: ~1,650 input tokens, ~1,200 output tokens per page
-        estimated_input = estimated_pages * 1_650
-        estimated_output = estimated_pages * 1_200
+        # Blended estimate: ~70% TAG=0 (~200 input) + ~30% TAG=1 (~1,650 input)
+        # Average: ~635 input tokens, ~900 output tokens per page
+        estimated_input = estimated_pages * 635
+        estimated_output = estimated_pages * 900
         raw_cost = (
             estimated_input / 1_000_000 * self.input_cost
             + estimated_output / 1_000_000 * self.output_cost
@@ -155,11 +156,11 @@ class CreditService:
 
     def estimate_cost(self, num_pages: int) -> dict:
         """Estimate the user-facing cost for converting *num_pages* pages."""
-        # Unified vision mode: 1 Gemini call per chunk (10 pages)
-        # Input: page image (~1,500 tokens) + prompt share (~150) = ~1,650/page
-        # Output: structured JSON with text + layout + tables = ~1,200/page
-        estimated_input = num_pages * 1_650
-        estimated_output = num_pages * 1_200
+        # TAG=0 (text-only, ~70%): local OCR → text-only Gemini (~200 input, ~600 output)
+        # TAG=1 (complex, ~30%): image → Gemini vision (~1,650 input, ~1,500 output)
+        # Blended average per page: ~635 input, ~870 output
+        estimated_input = num_pages * 635
+        estimated_output = num_pages * 870
         raw_cost = (
             estimated_input / 1_000_000 * self.input_cost
             + estimated_output / 1_000_000 * self.output_cost

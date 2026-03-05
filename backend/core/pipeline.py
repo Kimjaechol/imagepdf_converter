@@ -330,27 +330,45 @@ class Pipeline:
         images_dir: Path,
         output_images_dir: Path,
     ) -> ChunkResult:
-        """Process a chunk via single unified Gemini Vision call.
+        """Process a chunk via unified Gemini call with TAG=0/1 optimization.
 
         Steps:
           1. Render pages to images
-          2. (Optional) Quick local OCR for digital PDF text hints
-          3. Send all page images + text hints to Gemini in ONE call
-          4. Gemini returns: layout, tables, text, headings, reading order
+          2. Fast local pre-scan → classify TAG=0 (text) or TAG=1 (complex)
+          3. TAG=0 pages: run local Surya OCR first → send TEXT ONLY to Gemini
+          4. TAG=1 pages: send page IMAGES to Gemini for full vision analysis
           5. Extract figure/equation images locally
         """
         page_data_list = self.renderer.render_chunk(chunk, images_dir)
 
-        # Gather any digital text as hints for Gemini
-        ocr_hints: dict[int, list[LayoutBlock]] = {}
+        # Gather digital text (from PDF text layer) as baseline hints
+        ocr_blocks: dict[int, list[LayoutBlock]] = {}
         for pd in page_data_list:
             digital_blocks = pd.get("digital_blocks", [])
             if digital_blocks:
-                ocr_hints[pd["page_index"]] = digital_blocks
+                ocr_blocks[pd["page_index"]] = digital_blocks
 
-        # Single unified Gemini call for all pages in this chunk
+        # Pre-scan to identify TAG=0 pages that need local OCR
+        classifications = self.unified_vision.prescan_pages(page_data_list)
+
+        # Run local OCR (Surya) on TAG=0 pages that lack digital text
+        for pd in page_data_list:
+            page_idx = pd["page_index"]
+            cls = classifications.get(page_idx)
+            if cls and not cls.is_complex and page_idx not in ocr_blocks:
+                # TAG=0 page without digital text → run local OCR
+                img_path = pd["image_path"]
+                local_blocks = self.ocr.ocr_full_page(img_path, page_idx)
+                if local_blocks:
+                    ocr_blocks[page_idx] = local_blocks
+                    logger.debug(
+                        "Local OCR for TAG=0 page %d: %d blocks",
+                        page_idx, len(local_blocks),
+                    )
+
+        # Unified processing: TAG=0 → text only, TAG=1 → vision
         page_results = self.unified_vision.process_pages(
-            page_data_list, ocr_hints
+            page_data_list, ocr_blocks
         )
 
         # Fallback: if unified vision failed, use standard pipeline

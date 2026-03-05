@@ -3,15 +3,17 @@
 Instead of separate calls for reading order, heading classification, and text
 correction, this module sends page images to Gemini 3.1 Flash-Lite in ONE call.
 
-Key optimization: a fast LOCAL pre-scan classifies each page as "text_only" or
-"complex" (has tables, figures, graphs, multi-column).  Pages are then batched
-by type and processed with type-specific prompts:
+Key optimizations:
 
-  - text_only pages:  larger batches (up to 30), lighter prompt, less output
-  - complex pages:    smaller batches (up to 10), full analysis prompt
+1. Fast LOCAL pre-scan classifies each page as TAG=0 (text_only) or TAG=1
+   (complex: tables, figures, graphs, multi-column).
 
-This reduces output tokens for simple pages and gives more attention to complex
-pages, improving both speed and accuracy.
+2. TAG=0 pages: Local high-quality OCR (Surya) runs FIRST, then only the
+   extracted TEXT is sent to Gemini for correction/heading classification.
+   No images are sent → ~7.5x fewer input tokens per page.
+
+3. TAG=1 pages: Page images are sent directly to Gemini for full vision
+   analysis (OCR + table extraction + layout + headings + correction).
 """
 
 from __future__ import annotations
@@ -83,9 +85,9 @@ class UnifiedVisionProcessor:
     ) -> list[PageResult]:
         """Process multiple pages via unified Gemini Vision call(s).
 
-        1. Fast local pre-scan to classify pages
-        2. Separate into text_only vs complex batches
-        3. Send each batch with type-specific prompt
+        1. Fast local pre-scan → classify each page as TAG=0 or TAG=1
+        2. TAG=0 pages: text-only correction (no images sent to Gemini)
+        3. TAG=1 pages: full vision analysis (images sent to Gemini)
         """
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
@@ -95,7 +97,7 @@ class UnifiedVisionProcessor:
         ocr_blocks = ocr_blocks_per_page or {}
 
         # Step 1: Fast local pre-scan
-        classifications = self._prescan_pages(page_data_list)
+        classifications = self.prescan_pages(page_data_list)
 
         # Step 2: Split by type
         text_only_pages = []
@@ -108,27 +110,26 @@ class UnifiedVisionProcessor:
                 text_only_pages.append(pd)
 
         logger.info(
-            "Pre-scan: %d text-only, %d complex pages",
+            "Pre-scan: %d text-only (TAG=0), %d complex (TAG=1) pages",
             len(text_only_pages), len(complex_pages),
         )
 
         results: list[PageResult] = []
 
-        # Step 3a: Process text-only pages in large batches
+        # Step 3a: TAG=0 pages – TEXT ONLY to Gemini (no images)
+        # Local OCR already ran; send just text for correction + heading classification
         for i in range(0, len(text_only_pages), _BATCH_TEXT_ONLY):
             batch = text_only_pages[i : i + _BATCH_TEXT_ONLY]
-            batch_results = self._process_batch(
-                batch, ocr_blocks, api_key, page_type="text_only",
-                classifications=classifications,
+            batch_results = self._process_text_only_batch(
+                batch, ocr_blocks, api_key, classifications,
             )
             results.extend(batch_results)
 
-        # Step 3b: Process complex pages in smaller batches
+        # Step 3b: TAG=1 pages – full VISION analysis (images sent)
         for i in range(0, len(complex_pages), _BATCH_COMPLEX):
             batch = complex_pages[i : i + _BATCH_COMPLEX]
-            batch_results = self._process_batch(
-                batch, ocr_blocks, api_key, page_type="complex",
-                classifications=classifications,
+            batch_results = self._process_complex_batch(
+                batch, ocr_blocks, api_key, classifications,
             )
             results.extend(batch_results)
 
@@ -141,7 +142,7 @@ class UnifiedVisionProcessor:
     # Fast local pre-scan (NO API call, pure local analysis)
     # ------------------------------------------------------------------
 
-    def _prescan_pages(
+    def prescan_pages(
         self, page_data_list: list[dict],
     ) -> dict[int, PageClassification]:
         """Classify each page locally by analyzing vector objects and text blocks.
@@ -213,15 +214,69 @@ class UnifiedVisionProcessor:
     # Batch processing
     # ------------------------------------------------------------------
 
-    def _process_batch(
+    def _process_text_only_batch(
         self,
         page_data_list: list[dict],
         ocr_blocks: dict[int, list[LayoutBlock]],
         api_key: str,
-        page_type: str = "complex",
         classifications: dict[int, PageClassification] | None = None,
     ) -> list[PageResult]:
-        """Send a batch of pages to Gemini in a single API call."""
+        """TAG=0: Send only OCR TEXT to Gemini (no images).
+
+        Local OCR (Surya) already extracted high-quality text.
+        Gemini only needs to correct errors and classify headings.
+        This saves ~1,500 input tokens per page (no image tokens).
+        """
+        if not page_data_list:
+            return []
+
+        try:
+            import google.generativeai as genai
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(self.gemini_model)
+
+            # Build TEXT-ONLY prompt (no images!)
+            page_infos = []
+            for pd in page_data_list:
+                page_idx = pd["page_index"]
+                width = pd["width"]
+                height = pd["height"]
+
+                # Gather OCR text with bounding boxes
+                ocr_text = self._format_ocr_text(page_idx, ocr_blocks)
+
+                page_infos.append({
+                    "page_index": page_idx,
+                    "width": width,
+                    "height": height,
+                    "existing_text": ocr_text,
+                    "hints": "  [TAG=0]",
+                })
+
+            prompt = self._build_text_only_prompt(page_infos)
+
+            # Single text-only call – no images in parts
+            response = model.generate_content(prompt)
+
+            return self._parse_unified_response(response.text, page_data_list)
+
+        except Exception as exc:
+            logger.error("Text-only batch processing failed: %s", exc)
+            return []
+
+    def _process_complex_batch(
+        self,
+        page_data_list: list[dict],
+        ocr_blocks: dict[int, list[LayoutBlock]],
+        api_key: str,
+        classifications: dict[int, PageClassification] | None = None,
+    ) -> list[PageResult]:
+        """TAG=1: Send page IMAGES to Gemini for full vision analysis.
+
+        Complex pages need Gemini to see the actual image for table
+        structure, figure detection, multi-column layout, etc.
+        """
         if not page_data_list:
             return []
 
@@ -232,7 +287,7 @@ class UnifiedVisionProcessor:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(self.gemini_model)
 
-            # Build the multimodal prompt parts
+            # Build multimodal prompt: images + text hints
             parts: list[Any] = []
 
             page_infos = []
@@ -246,22 +301,11 @@ class UnifiedVisionProcessor:
                 img = Image.open(img_path)
                 parts.append(img)
 
-                # Build text context + classification hints for this page
-                existing_text = ""
-                if page_idx in ocr_blocks and ocr_blocks[page_idx]:
-                    text_parts = []
-                    for b in ocr_blocks[page_idx]:
-                        if b.text:
-                            bbox_str = ""
-                            if b.bbox:
-                                bbox_str = f" [{b.bbox.x0:.0f},{b.bbox.y0:.0f},{b.bbox.x1:.0f},{b.bbox.y1:.0f}]"
-                            text_parts.append(f"  - \"{b.text[:200]}\"{bbox_str}")
-                    existing_text = "\n".join(text_parts)
+                # Gather any existing OCR/digital text as hints
+                ocr_text = self._format_ocr_text(page_idx, ocr_blocks)
 
-                # Add 0/1 complexity tag + detail hints
-                # 0 = text only, 1 = complex (tables/figures/graphs/equations)
+                # Build detail hints from classification
                 cls = (classifications or {}).get(page_idx)
-                tag = 1 if (cls and cls.is_complex) else 0
                 detail_hints = []
                 if cls:
                     if cls.has_tables:
@@ -272,7 +316,7 @@ class UnifiedVisionProcessor:
                         detail_hints.append("MULTI_COL")
                     if cls.num_text_blocks == 0:
                         detail_hints.append("IMAGE_ONLY")
-                hints = f"  [TAG={tag}]"
+                hints = "  [TAG=1]"
                 if detail_hints:
                     hints += " " + ",".join(detail_hints)
 
@@ -280,31 +324,42 @@ class UnifiedVisionProcessor:
                     "page_index": page_idx,
                     "width": width,
                     "height": height,
-                    "existing_text": existing_text,
+                    "existing_text": ocr_text,
                     "hints": hints,
                 })
 
-            # Build type-specific prompt
-            prompt = self._build_prompt(page_infos, page_type)
+            prompt = self._build_complex_prompt(page_infos)
             parts.append(prompt)
 
-            # Call Gemini
+            # Multimodal call – images + text prompt
             response = model.generate_content(parts)
 
             return self._parse_unified_response(response.text, page_data_list)
 
         except Exception as exc:
-            logger.error("Unified vision processing failed: %s", exc)
+            logger.error("Complex batch vision processing failed: %s", exc)
             return []
+
+    def _format_ocr_text(
+        self,
+        page_idx: int,
+        ocr_blocks: dict[int, list[LayoutBlock]],
+    ) -> str:
+        """Format OCR blocks into a text representation with bboxes."""
+        if page_idx not in ocr_blocks or not ocr_blocks[page_idx]:
+            return ""
+        text_parts = []
+        for b in ocr_blocks[page_idx]:
+            if b.text:
+                bbox_str = ""
+                if b.bbox:
+                    bbox_str = f" [{b.bbox.x0:.0f},{b.bbox.y0:.0f},{b.bbox.x1:.0f},{b.bbox.y1:.0f}]"
+                text_parts.append(f"  - \"{b.text[:200]}\"{bbox_str}")
+        return "\n".join(text_parts)
 
     # ------------------------------------------------------------------
     # Prompts (type-specific)
     # ------------------------------------------------------------------
-
-    def _build_prompt(self, page_infos: list[dict], page_type: str) -> str:
-        if page_type == "text_only":
-            return self._build_text_only_prompt(page_infos)
-        return self._build_complex_prompt(page_infos)
 
     def _build_text_only_prompt(self, page_infos: list[dict]) -> str:
         """Lighter prompt for text-only pages – no table schema needed."""
@@ -317,18 +372,14 @@ class UnifiedVisionProcessor:
 
         pages_section = "\n\n".join(pages_desc)
 
-        return f"""Analyze each page image below.
+        return f"""You are given OCR-extracted text from text-only document pages (TAG=0).
+No images are provided. The OCR was done by a high-quality local engine.
 
-Each page has a [TAG=0] or [TAG=1] label:
-  TAG=0 → Text-only page (no tables, figures, or complex layout)
-  TAG=1 → Complex page (may contain tables, figures, graphs, equations, multi-column)
-All pages in this batch are TAG=0 (text only).
-
-Tasks:
-1. Extract all text blocks with bbox coordinates.
-2. Classify headings (h1-h6). Korean "제1장"/"제1절" = h2/h3. No level skipping.
-3. Determine reading order (top-to-bottom, left-to-right).
-4. Fix any OCR errors (Korean Hanja, spelling, spacing).
+Your tasks:
+1. **Correct OCR errors**: Fix Korean Hanja (甲→갑), spelling, spacing errors.
+2. **Classify headings**: h1-h6. Korean "제1장"/"제1절" = h2/h3. No level skipping.
+3. **Determine reading order**: Based on bbox positions (top-to-bottom, left-to-right).
+4. **Preserve bbox coordinates**: Keep the original bbox from OCR.
 
 {pages_section}
 
