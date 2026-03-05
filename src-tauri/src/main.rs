@@ -20,6 +20,16 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = backend::process::start_backend(&handle).await {
                     tracing::error!("Failed to start backend: {}", e);
+                    // Show error dialog so user knows what happened
+                    let msg = format!(
+                        "백엔드 서버 시작에 실패했습니다.\n\n오류: {}\n\n\
+                         Python이 올바르게 번들되었는지 확인해 주세요.",
+                        e
+                    );
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.emit("backend-error", &msg);
+                    }
+                    tracing::error!("Backend error details: {}", msg);
                 }
             });
             Ok(())

@@ -29,34 +29,30 @@ fn find_python(app: &AppHandle) -> PathBuf {
 
     let python_bin = if cfg!(windows) { "python.exe" } else { "bin/python3" };
 
-    // 1. Bundled portable Python (packaged app - direct path)
-    let bundled = resource_dir.join("portable_python").join(python_bin);
-    if bundled.exists() {
-        tracing::info!("Using bundled Python: {:?}", bundled);
-        return bundled;
+    // Tauri v2 maps "../" resource paths to "_up_/" in the bundle.
+    // So "../build_output/portable_python/**/*" becomes "_up_/build_output/portable_python/..."
+    let candidates = [
+        // 1. Tauri v2 bundled path (_up_/ prefix from ../ in tauri.conf.json resources)
+        resource_dir.join("_up_").join("build_output").join("portable_python").join(python_bin),
+        // 2. Direct path (in case resources are flattened)
+        resource_dir.join("portable_python").join(python_bin),
+        // 3. Under build_output/ without _up_
+        resource_dir.join("build_output").join("portable_python").join(python_bin),
+        // 4. Dev mode: project_root/build_output/portable_python/
+        resource_dir.join("..").join("build_output").join("portable_python").join(python_bin),
+    ];
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            tracing::info!("Using Python: {:?}", candidate);
+            return candidate.clone();
+        }
+        tracing::debug!("Python not found at: {:?}", candidate);
     }
 
-    // 2. Bundled portable Python (packaged app - under build_output/)
-    let bundled_bo = resource_dir.join("build_output").join("portable_python").join(python_bin);
-    if bundled_bo.exists() {
-        tracing::info!("Using bundled Python: {:?}", bundled_bo);
-        return bundled_bo;
-    }
-
-    // 3. Portable Python in build_output (dev mode)
-    let dev_portable = resource_dir
-        .join("..")
-        .join("build_output")
-        .join("portable_python")
-        .join(python_bin);
-    if dev_portable.exists() {
-        tracing::info!("Using dev portable Python: {:?}", dev_portable);
-        return dev_portable;
-    }
-
-    // 3. System Python
+    // Fallback: System Python
     let system_python = if cfg!(windows) { "python" } else { "python3" };
-    tracing::info!("Using system Python: {}", system_python);
+    tracing::warn!("No bundled Python found, falling back to system: {}", system_python);
     PathBuf::from(system_python)
 }
 
@@ -64,18 +60,26 @@ fn find_python(app: &AppHandle) -> PathBuf {
 fn find_backend_dir(app: &AppHandle) -> PathBuf {
     let resource_dir = resolve_resource_dir(app);
 
-    // Packaged: resources/backend/
-    if resource_dir.join("backend").exists() {
-        return resource_dir;
-    }
+    // Tauri v2 maps "../backend/**/*.py" to "_up_/backend/..." in the bundle
+    let candidates = [
+        // 1. Tauri v2 bundled path (_up_/ prefix)
+        resource_dir.join("_up_"),
+        // 2. Direct resource dir (resources/backend/)
+        resource_dir.clone(),
+        // 3. Dev: project root (resource_dir/../)
+        resource_dir.join(".."),
+    ];
 
-    // Dev: project root (resource_dir/../)
-    let parent = resource_dir.join("..");
-    if parent.join("backend").exists() {
-        return parent;
+    for candidate in &candidates {
+        if candidate.join("backend").exists() {
+            tracing::info!("Using backend dir: {:?}", candidate);
+            return candidate.clone();
+        }
+        tracing::debug!("backend/ not found at: {:?}", candidate);
     }
 
     // Fallback: current directory
+    tracing::warn!("No backend dir found, falling back to current dir");
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
@@ -87,9 +91,10 @@ pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
     let config_path = backend_dir.join("config").join("pipeline_config.yaml");
 
     tracing::info!(
-        "Starting backend: python={:?}, dir={:?}, port={}",
-        python, backend_dir, port
+        "Starting backend: python={:?} (exists={}), dir={:?} (exists={}), port={}",
+        python, python.exists(), backend_dir, backend_dir.exists(), port
     );
+    tracing::info!("Resource dir: {:?}", resolve_resource_dir(app));
 
     let child = Command::new(&python)
         .args([
