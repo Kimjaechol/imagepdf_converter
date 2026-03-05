@@ -245,6 +245,86 @@ class PageRenderer:
                         "x1": r.x1 * self._zoom,
                         "y1": r.y1 * self._zoom,
                     })
+        # Post-process: reclassify orthogonal lines that don't form
+        # closed structures (they are annotation/leader lines, not borders).
+        drawings = self._reclassify_orthogonal_annotations(drawings)
+
+        return drawings
+
+    def _reclassify_orthogonal_annotations(
+        self, drawings: list[dict],
+    ) -> list[dict]:
+        """Reclassify horizontal/vertical lines that are NOT part of a closed
+        structure (table grid, box border) as annotation lines.
+
+        A structural line must participate in a grid or enclosed region —
+        meaning its endpoints should be near intersection points with other
+        orthogonal lines.  A horizontal line whose endpoints don't meet any
+        vertical line (and vice-versa) is likely a leader/pointer line used
+        for annotation, not a border.
+        """
+        ENDPOINT_SNAP = 15.0  # px tolerance for "lines meeting at a point"
+
+        h_lines: list[dict] = []  # horizontal structural lines
+        v_lines: list[dict] = []  # vertical structural lines
+        rects: list[dict] = []
+
+        for d in drawings:
+            if d["type"] == "rect":
+                rects.append(d)
+            elif d["type"] == "line" and d.get("line_class") == "structural":
+                dx = abs(d["x1"] - d["x0"])
+                dy = abs(d["y1"] - d["y0"])
+                if dy < dx:
+                    h_lines.append(d)
+                else:
+                    v_lines.append(d)
+
+        def _endpoint_meets_perpendicular(
+            line: dict, perp_lines: list[dict], is_horizontal: bool,
+        ) -> bool:
+            """Check if either endpoint of *line* is near any perpendicular line."""
+            lx0, ly0, lx1, ly1 = line["x0"], line["y0"], line["x1"], line["y1"]
+            for endpoint_x, endpoint_y in [(lx0, ly0), (lx1, ly1)]:
+                for p in perp_lines:
+                    px0, py0, px1, py1 = p["x0"], p["y0"], p["x1"], p["y1"]
+                    if is_horizontal:
+                        # endpoint should be near the x-range of the v-line
+                        vx = (px0 + px1) / 2
+                        vy_min, vy_max = min(py0, py1), max(py0, py1)
+                        if (abs(endpoint_x - vx) < ENDPOINT_SNAP
+                                and vy_min - ENDPOINT_SNAP <= endpoint_y <= vy_max + ENDPOINT_SNAP):
+                            return True
+                    else:
+                        # endpoint should be near the y-range of the h-line
+                        hy = (py0 + py1) / 2
+                        hx_min, hx_max = min(px0, px1), max(px0, px1)
+                        if (abs(endpoint_y - hy) < ENDPOINT_SNAP
+                                and hx_min - ENDPOINT_SNAP <= endpoint_x <= hx_max + ENDPOINT_SNAP):
+                            return True
+                # Also check if endpoint is near any rect corner
+                for r in rects:
+                    corners = [
+                        (r["x0"], r["y0"]), (r["x1"], r["y0"]),
+                        (r["x0"], r["y1"]), (r["x1"], r["y1"]),
+                    ]
+                    for cx, cy in corners:
+                        if abs(endpoint_x - cx) < ENDPOINT_SNAP and abs(endpoint_y - cy) < ENDPOINT_SNAP:
+                            return True
+            return False
+
+        # Reclassify: an orthogonal line that doesn't connect to any
+        # perpendicular line or rect corner at EITHER endpoint is annotation
+        for d in drawings:
+            if d["type"] != "line" or d.get("line_class") != "structural":
+                continue
+            dx = abs(d["x1"] - d["x0"])
+            dy = abs(d["y1"] - d["y0"])
+            is_h = dy < dx
+            perp = v_lines if is_h else h_lines
+            if not _endpoint_meets_perpendicular(d, perp, is_h):
+                d["line_class"] = "annotation"
+
         return drawings
 
     @staticmethod
@@ -252,23 +332,25 @@ class PageRenderer:
         x0: float, y0: float, x1: float, y1: float,
         page_width: float, page_height: float,
     ) -> str:
-        """Classify a line as 'structural' or 'annotation'.
+        """Preliminary classification of a single line.
 
-        Structural lines are horizontal or vertical (table borders, section
-        dividers, footnote separators).  Annotation lines are diagonal /
-        non-orthogonal (arrows, leader lines, callout connectors).
+        This is a first pass — horizontal/vertical lines are tentatively
+        marked 'structural'.  The post-processing step
+        ``_reclassify_orthogonal_annotations`` then demotes orthogonal lines
+        that don't participate in a closed structure (grid / box) to
+        'annotation'.
+
+        Diagonal lines (angle > 5 deg from horizontal AND > 5 deg from
+        vertical) are always 'annotation'.
         """
         dx = abs(x1 - x0)
         dy = abs(y1 - y0)
         length = (dx * dx + dy * dy) ** 0.5
         if length < 5:
             return "structural"  # tiny dot-like, harmless
-        # Angle from horizontal
-        angle_deg = 0.0
-        if length > 0:
-            import math
-            angle_deg = math.degrees(math.atan2(dy, dx))
-        # Horizontal (0°±5°) or vertical (90°±5°) → structural
+        import math
+        angle_deg = math.degrees(math.atan2(dy, dx))
+        # Horizontal (0 +- 5 deg) or vertical (90 +- 5 deg) -> tentatively structural
         if angle_deg <= 5 or angle_deg >= 85:
             return "structural"
         return "annotation"
