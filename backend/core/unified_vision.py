@@ -243,8 +243,8 @@ class UnifiedVisionProcessor:
                 width = pd["width"]
                 height = pd["height"]
 
-                # Gather OCR text with bounding boxes
-                ocr_text = self._format_ocr_text(page_idx, ocr_blocks)
+                # Gather OCR text with style metadata
+                ocr_text = self._format_ocr_text(page_idx, ocr_blocks, width)
 
                 page_infos.append({
                     "page_index": page_idx,
@@ -302,7 +302,7 @@ class UnifiedVisionProcessor:
                 parts.append(img)
 
                 # Gather any existing OCR/digital text as hints
-                ocr_text = self._format_ocr_text(page_idx, ocr_blocks)
+                ocr_text = self._format_ocr_text(page_idx, ocr_blocks, width)
 
                 # Build detail hints from classification
                 cls = (classifications or {}).get(page_idx)
@@ -344,17 +344,51 @@ class UnifiedVisionProcessor:
         self,
         page_idx: int,
         ocr_blocks: dict[int, list[LayoutBlock]],
+        page_width: float = 0,
     ) -> str:
-        """Format OCR blocks into a text representation with bboxes."""
+        """Format OCR blocks with style metadata for heading classification.
+
+        Includes font size, bold, alignment – enough for Gemini to classify
+        headings and determine reading order WITHOUT seeing the image.
+        """
         if page_idx not in ocr_blocks or not ocr_blocks[page_idx]:
             return ""
         text_parts = []
         for b in ocr_blocks[page_idx]:
-            if b.text:
-                bbox_str = ""
-                if b.bbox:
-                    bbox_str = f" [{b.bbox.x0:.0f},{b.bbox.y0:.0f},{b.bbox.x1:.0f},{b.bbox.y1:.0f}]"
-                text_parts.append(f"  - \"{b.text[:200]}\"{bbox_str}")
+            if not b.text:
+                continue
+            # bbox coordinates
+            bbox_str = ""
+            if b.bbox:
+                bbox_str = f" bbox=[{b.bbox.x0:.0f},{b.bbox.y0:.0f},{b.bbox.x1:.0f},{b.bbox.y1:.0f}]"
+
+            # Style metadata (crucial for heading classification)
+            style_parts = []
+            if b.style:
+                # Font size (exact from digital PDF, or estimated from bbox height)
+                if b.style.font_size and b.style.font_size != 12.0:
+                    style_parts.append(f"sz={b.style.font_size:.1f}pt")
+                if b.style.is_bold:
+                    style_parts.append("BOLD")
+                if b.style.is_italic:
+                    style_parts.append("italic")
+                if b.style.alignment.value != "left":
+                    style_parts.append(f"align={b.style.alignment.value}")
+            elif b.bbox and page_width > 0:
+                # Estimate style from bbox for Surya OCR blocks
+                # Font size ≈ bbox height (rough but useful)
+                est_size = b.bbox.height * 0.75  # bbox height to pt approximation
+                if est_size > 14:
+                    style_parts.append(f"sz~{est_size:.0f}pt")
+                # Alignment from position
+                cx = b.bbox.center_x
+                if abs(cx - page_width / 2) < page_width * 0.08:
+                    style_parts.append("align=center")
+                elif b.bbox.x0 > page_width * 0.55:
+                    style_parts.append("align=right")
+
+            style_str = f" ({', '.join(style_parts)})" if style_parts else ""
+            text_parts.append(f"  - \"{b.text[:200]}\"{bbox_str}{style_str}")
         return "\n".join(text_parts)
 
     # ------------------------------------------------------------------
@@ -373,13 +407,22 @@ class UnifiedVisionProcessor:
         pages_section = "\n\n".join(pages_desc)
 
         return f"""You are given OCR-extracted text from text-only document pages (TAG=0).
-No images are provided. The OCR was done by a high-quality local engine.
+No images are provided. The text was extracted by a high-quality local OCR engine.
+
+Each text block includes metadata: bbox coordinates, font size (sz), BOLD, alignment.
+Use this metadata to classify headings and determine styles:
+
+Heading classification rules:
+- Large font (sz>16pt) + BOLD + align=center → likely h1 or h2 (main title)
+- Large font (sz>14pt) + BOLD → likely h2 or h3
+- Korean patterns: "제1장"/"제1편" = h2, "제1절"/"제1관" = h3, "제1조" = h4
+- No heading level skipping (h1→h3 is invalid, must be h1→h2→h3)
 
 Your tasks:
 1. **Correct OCR errors**: Fix Korean Hanja (甲→갑), spelling, spacing errors.
-2. **Classify headings**: h1-h6. Korean "제1장"/"제1절" = h2/h3. No level skipping.
+2. **Classify headings**: Using font size, bold, alignment metadata + text patterns.
 3. **Determine reading order**: Based on bbox positions (top-to-bottom, left-to-right).
-4. **Preserve bbox coordinates**: Keep the original bbox from OCR.
+4. **Preserve bbox coordinates and styles**: Keep the original bbox. Reflect font_size_relative from actual sz metadata.
 
 {pages_section}
 
