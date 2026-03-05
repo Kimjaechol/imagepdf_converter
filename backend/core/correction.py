@@ -40,6 +40,9 @@ class CorrectionEngine:
 
     def correct(self, blocks: list[LayoutBlock]) -> list[LayoutBlock]:
         """Apply corrections to all blocks with text."""
+        # Stage 0: Hanja Cheongan context-based correction (before anything else)
+        blocks = self._correct_hanja_cheongan(blocks)
+
         for block in blocks:
             if not block.text:
                 continue
@@ -63,6 +66,116 @@ class CorrectionEngine:
         """Persist the correction dictionary to disk."""
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self._dict, f, ensure_ascii=False, indent=2)
+
+    # ------------------------------------------------------------------
+    # Stage 0: Hanja Cheongan (天干) context-based correction
+    # ------------------------------------------------------------------
+
+    # Characters that OCR frequently confuses with Cheongan Hanja
+    _CHEONGAN_CONFUSION: list[tuple[str, str]] = [
+        ("乙", "Z"),   ("乙", "z"),   ("乙", "2"),   ("乙", "己"),
+        ("丁", "T"),   ("丁", "7"),
+        ("甲", "田"),  ("甲", "由"),
+        ("丙", "内"),
+    ]
+    _CHEONGAN_CHARS = set("甲乙丙丁戊己庚辛壬癸")
+    _CHEONGAN_DOC_KEYWORDS: list[list[str]] = [
+        # exam documents
+        ["문항", "정답", "배점", "수험번호", "시험시간", "시험"],
+        # legal documents
+        ["계약", "원고", "피고", "판결", "조항", "위반", "소송"],
+        # government forms
+        ["신청인", "피신청인", "등기", "관할", "처분", "허가"],
+    ]
+    _KO_JOSA = re.compile(
+        r"^(은|는|이|가|에게|으로|와|과|의|을|를|도|만|에|서|로|한테|께)(?:\s|$)"
+    )
+
+    def _correct_hanja_cheongan(
+        self, blocks: list[LayoutBlock],
+    ) -> list[LayoutBlock]:
+        """Context-based correction of Hanja Cheongan misrecognition.
+
+        Algorithm (matches patent claims 11-13):
+        1. Scan full document text for Cheongan-related signals.
+        2. Compute confidence based on:
+           a) Document-type keyword matches (+0.50 base)
+           b) Any correctly-recognized Cheongan character in the same
+              document (+0.35 cross-reference bonus)
+           c) Confused character appears before a Korean josa (+0.10)
+           d) Sequential pattern (甲→乙→丙→丁→戊) detected (+0.05)
+        3. Replace only when confidence >= 0.80.
+        """
+        all_text = " ".join(b.text for b in blocks if b.text)
+        if not all_text:
+            return blocks
+
+        # --- signal detection ---
+        has_keyword = self._detect_cheongan_doc_keywords(all_text)
+        has_existing_cheongan = bool(self._CHEONGAN_CHARS & set(all_text))
+        has_sequential = self._detect_cheongan_sequence(all_text)
+
+        base_confidence = 0.50 if has_keyword else 0.0
+        if has_existing_cheongan:
+            base_confidence += 0.35
+        if has_sequential:
+            base_confidence += 0.05
+
+        # Not enough signals – skip replacement
+        if base_confidence < 0.50:
+            return blocks
+
+        # --- replacement ---
+        for block in blocks:
+            if not block.text:
+                continue
+            block.text = self._replace_cheongan_confusions(
+                block.text, base_confidence,
+            )
+
+        return blocks
+
+    def _detect_cheongan_doc_keywords(self, text: str) -> bool:
+        for group in self._CHEONGAN_DOC_KEYWORDS:
+            if sum(1 for kw in group if kw in text) >= 2:
+                return True
+        return False
+
+    def _detect_cheongan_sequence(self, text: str) -> bool:
+        """Check if two or more sequential Cheongan appear in order."""
+        seq = "甲乙丙丁戊己庚辛壬癸"
+        found = [c for c in seq if c in text]
+        if len(found) < 2:
+            return False
+        indices = [seq.index(c) for c in found]
+        # Check if they are in ascending order
+        return indices == sorted(indices)
+
+    def _replace_cheongan_confusions(
+        self, text: str, base_confidence: float,
+    ) -> str:
+        """Replace confused characters with Cheongan Hanja when confident."""
+        for correct, confused in self._CHEONGAN_CONFUSION:
+            if confused not in text:
+                continue
+            # Walk through each occurrence
+            result_parts: list[str] = []
+            i = 0
+            while i < len(text):
+                if text[i:i + len(confused)] == confused:
+                    conf = base_confidence
+                    # Check josa pattern after the confused char
+                    after = text[i + len(confused):]
+                    if self._KO_JOSA.match(after):
+                        conf += 0.10
+                    if conf >= 0.80:
+                        result_parts.append(correct)
+                        i += len(confused)
+                        continue
+                result_parts.append(text[i])
+                i += 1
+            text = "".join(result_parts)
+        return text
 
     # ------------------------------------------------------------------
     # Dictionary loading

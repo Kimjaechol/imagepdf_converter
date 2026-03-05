@@ -314,13 +314,33 @@ class PageRenderer:
             return False
 
         # Reclassify: an orthogonal line that doesn't connect to any
-        # perpendicular line or rect corner at EITHER endpoint is annotation
+        # perpendicular line or rect corner at EITHER endpoint is annotation.
+        #
+        # Exception: a long horizontal line in the bottom quarter of the
+        # page is likely a footnote separator — keep it structural even if
+        # it doesn't form a grid.
+        page_h = max(
+            (max(d["y0"], d["y1"]) for d in drawings if "y1" in d),
+            default=0.0,
+        )
+        page_w = max(
+            (max(d["x0"], d["x1"]) for d in drawings if "x1" in d),
+            default=0.0,
+        )
+
         for d in drawings:
             if d["type"] != "line" or d.get("line_class") != "structural":
                 continue
             dx = abs(d["x1"] - d["x0"])
             dy = abs(d["y1"] - d["y0"])
             is_h = dy < dx
+
+            # Exception: footnote separator (long H-line near page bottom)
+            if is_h and page_h > 0 and page_w > 0:
+                y_mid = (d["y0"] + d["y1"]) / 2
+                if y_mid > page_h * 0.70 and dx > page_w * 0.15:
+                    continue  # keep structural
+
             perp = v_lines if is_h else h_lines
             if not _endpoint_meets_perpendicular(d, perp, is_h):
                 d["line_class"] = "annotation"
