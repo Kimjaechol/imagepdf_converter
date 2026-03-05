@@ -82,6 +82,62 @@ class LayoutDetector:
 
         return blocks
 
+    def detect_line_regions(
+        self,
+        lines: list[dict],
+        page_index: int,
+        page_width: float,
+        page_height: float,
+    ) -> list[LayoutBlock]:
+        """Detect regions bounded by structural lines (tables, boxed areas).
+
+        This is used by the hybrid digital-PDF strategy: regions with
+        structural borders need image-based processing (AI + OCR) because
+        directly extracting digital text from those regions scrambles the
+        reading order when the borders are removed.
+
+        Returns LayoutBlock instances with block_type TABLE or BOX.
+        """
+        structural = [
+            ln for ln in lines
+            if ln["type"] == "rect"
+            or (ln["type"] == "line" and ln.get("line_class") == "structural")
+        ]
+        if not structural:
+            return []
+
+        # Detect table regions from structural lines
+        table_regions = self._detect_tables_from_lines(structural, page_index)
+
+        # Also detect large rectangles that are not tables (boxed text areas)
+        for ln in structural:
+            if ln["type"] != "rect":
+                continue
+            rw = abs(ln["x1"] - ln["x0"])
+            rh = abs(ln["y1"] - ln["y0"])
+            # Large rectangles that aren't already covered by a table region
+            if rw > page_width * 0.2 and rh > page_height * 0.05:
+                rect_bbox = BBox(
+                    x0=min(ln["x0"], ln["x1"]),
+                    y0=min(ln["y0"], ln["y1"]),
+                    x1=max(ln["x0"], ln["x1"]),
+                    y1=max(ln["y0"], ln["y1"]),
+                )
+                already_covered = any(
+                    rect_bbox.overlap_ratio(tr.bbox) > 0.5
+                    for tr in table_regions if tr.bbox
+                )
+                if not already_covered:
+                    table_regions.append(LayoutBlock(
+                        id=f"box_vec_{page_index}_{uuid.uuid4().hex[:8]}",
+                        block_type=BlockType.BOX,
+                        bbox=rect_bbox,
+                        confidence=0.6,
+                        page_index=page_index,
+                    ))
+
+        return table_regions
+
     # ------------------------------------------------------------------
     # Surya layout engine
     # ------------------------------------------------------------------
@@ -158,31 +214,72 @@ class LayoutDetector:
                 elif dx < 3 and dy > 20:  # vertical
                     v_lines.append(ln)
             elif ln["type"] == "rect":
-                # Rectangles indicate table or box regions
-                pass
+                # Rectangles indicate table cells or box regions
+                rw = abs(ln["x1"] - ln["x0"])
+                rh = abs(ln["y1"] - ln["y0"])
+                if rw > 15 and rh > 10:
+                    # Derive lines from rectangle edges for table detection
+                    h_lines.append({"x0": ln["x0"], "y0": ln["y0"], "x1": ln["x1"], "y1": ln["y0"]})
+                    h_lines.append({"x0": ln["x0"], "y0": ln["y1"], "x1": ln["x1"], "y1": ln["y1"]})
+                    v_lines.append({"x0": ln["x0"], "y0": ln["y0"], "x1": ln["x0"], "y1": ln["y1"]})
+                    v_lines.append({"x0": ln["x1"], "y0": ln["y0"], "x1": ln["x1"], "y1": ln["y1"]})
 
         if len(h_lines) < 2 or len(v_lines) < 2:
             return []
 
-        # Cluster lines into potential table regions
-        all_points = []
-        for ln in h_lines + v_lines:
-            all_points.extend([(ln["x0"], ln["y0"]), (ln["x1"], ln["y1"])])
+        # Cluster lines into separate table regions using spatial proximity
+        return self._cluster_lines_into_tables(h_lines, v_lines, page_index)
 
-        if not all_points:
+    def _cluster_lines_into_tables(
+        self,
+        h_lines: list[dict],
+        v_lines: list[dict],
+        page_index: int,
+    ) -> list[LayoutBlock]:
+        """Cluster nearby lines into separate table regions instead of one giant region."""
+        all_lines = h_lines + v_lines
+        if not all_lines:
             return []
 
-        pts = np.array(all_points)
-        x0, y0 = pts.min(axis=0)
-        x1, y1 = pts.max(axis=0)
+        # Collect all line midpoints for clustering
+        points = []
+        for ln in all_lines:
+            mx = (ln["x0"] + ln["x1"]) / 2
+            my = (ln["y0"] + ln["y1"]) / 2
+            points.append((mx, my))
 
-        return [LayoutBlock(
-            id=f"tbl_vec_{page_index}_{uuid.uuid4().hex[:8]}",
-            block_type=BlockType.TABLE,
-            bbox=BBox(x0=float(x0), y0=float(y0), x1=float(x1), y1=float(y1)),
-            confidence=0.7,
-            page_index=page_index,
-        )]
+        pts = np.array(points)
+        # Use simple Y-gap clustering: if gap > threshold, it's a new table
+        y_sorted_indices = np.argsort(pts[:, 1])
+        gap_threshold = 50  # pixels between tables
+
+        clusters: list[list[int]] = [[]]
+        for i, idx in enumerate(y_sorted_indices):
+            if i > 0:
+                prev_idx = y_sorted_indices[i - 1]
+                if pts[idx, 1] - pts[prev_idx, 1] > gap_threshold:
+                    clusters.append([])
+            clusters[-1].append(idx)
+
+        tables: list[LayoutBlock] = []
+        for cluster in clusters:
+            if len(cluster) < 3:  # need at least a few lines for a table
+                continue
+            cluster_pts = pts[cluster]
+            x0, y0 = cluster_pts.min(axis=0)
+            x1, y1 = cluster_pts.max(axis=0)
+            # Also check X-range to split side-by-side tables
+            if x1 - x0 < 20 or y1 - y0 < 20:
+                continue
+            tables.append(LayoutBlock(
+                id=f"tbl_vec_{page_index}_{uuid.uuid4().hex[:8]}",
+                block_type=BlockType.TABLE,
+                bbox=BBox(x0=float(x0), y0=float(y0), x1=float(x1), y1=float(y1)),
+                confidence=0.7,
+                page_index=page_index,
+            ))
+
+        return tables
 
     def _merge_table_regions(
         self,

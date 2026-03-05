@@ -35,19 +35,25 @@ class ImageExtractor:
             if block.bbox is None:
                 continue
 
-            # Crop region
+            # Crop region with padding to avoid cutting edges
+            pad = 4  # pixels of padding
             cropped = img.crop((
-                max(0, int(block.bbox.x0)),
-                max(0, int(block.bbox.y0)),
-                min(img.width, int(block.bbox.x1)),
-                min(img.height, int(block.bbox.y1)),
+                max(0, int(block.bbox.x0) - pad),
+                max(0, int(block.bbox.y0) - pad),
+                min(img.width, int(block.bbox.x1) + pad),
+                min(img.height, int(block.bbox.y1) + pad),
             ))
 
-            # Save
-            ext = "png"
+            # Use JPEG for large photo-like images, PNG for equations/diagrams
+            is_photo = (cropped.width * cropped.height > 200_000 and
+                        block.block_type == BlockType.FIGURE)
+            ext = "jpg" if is_photo else "png"
             filename = f"{block.block_type.value}_{page_index:04d}_{uuid.uuid4().hex[:6]}.{ext}"
             save_path = self.output_dir / filename
-            cropped.save(str(save_path))
+            if ext == "jpg":
+                cropped.save(str(save_path), "JPEG", quality=90)
+            else:
+                cropped.save(str(save_path))
             block.image_path = str(save_path)
 
             logger.info(

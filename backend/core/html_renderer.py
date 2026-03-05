@@ -259,6 +259,12 @@ class HtmlRenderer:
             parts.append("font-style:italic")
         if style.is_underline:
             parts.append("text-decoration:underline")
+        if self.preserve_font_size_ratio and style.font_size and style.font_size != 12.0:
+            parts.append(f"font-size:{style.font_size:.1f}pt")
+        if style.color and style.color != "#000000":
+            parts.append(f"color:{style.color}")
+        if style.line_spacing and style.line_spacing != 1.0:
+            parts.append(f"line-height:{style.line_spacing:.2f}")
         if not parts:
             return ""
         return f' style="{"; ".join(parts)}"'

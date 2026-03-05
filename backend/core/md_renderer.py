@@ -118,9 +118,7 @@ class MarkdownRenderer:
         }
         prefix = level_map.get(block.heading_level, "###")
         text = block.text.strip()
-        # Bold heading text if the original was bold
-        if block.style and block.style.is_bold:
-            text = f"**{text}**"
+        # Markdown headings are already bold by convention; don't double-wrap
         return f"{prefix} {text}"
 
     def _render_paragraph(self, block: LayoutBlock) -> str:

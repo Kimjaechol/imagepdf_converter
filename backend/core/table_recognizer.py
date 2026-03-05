@@ -58,10 +58,51 @@ class TableRecognizer:
         blocks: list[LayoutBlock],
     ) -> list[LayoutBlock]:
         """Recognize table structures for all TABLE blocks in *blocks*."""
+        img = Image.open(image_path).convert("RGB")
         for block in blocks:
             if block.block_type == BlockType.TABLE:
                 block.table_structure = self.recognize(image_path, block)
+                # OCR cell text if cells have no text yet
+                if block.table_structure and block.bbox:
+                    self._ocr_cells(img, block.table_structure, block.bbox)
         return blocks
+
+    def _ocr_cells(
+        self,
+        full_img: Image.Image,
+        table: TableStructure,
+        table_bbox: BBox,
+    ) -> None:
+        """Run OCR on each cell to populate cell text."""
+        try:
+            import pytesseract
+        except ImportError:
+            return
+
+        for cell in table.cells:
+            if cell.text.strip():
+                continue  # already has text
+            if cell.bbox is None:
+                continue
+            # Cell bbox is relative to table crop; offset to full image coords
+            cx0 = int(table_bbox.x0 + cell.bbox.x0)
+            cy0 = int(table_bbox.y0 + cell.bbox.y0)
+            cx1 = int(table_bbox.x0 + cell.bbox.x1)
+            cy1 = int(table_bbox.y0 + cell.bbox.y1)
+            cx0 = max(0, cx0)
+            cy0 = max(0, cy0)
+            cx1 = min(full_img.width, cx1)
+            cy1 = min(full_img.height, cy1)
+            if cx1 <= cx0 or cy1 <= cy0:
+                continue
+            cropped = full_img.crop((cx0, cy0, cx1, cy1))
+            try:
+                text = pytesseract.image_to_string(
+                    cropped, lang="kor+eng", config="--oem 3 --psm 6"
+                )
+                cell.text = text.strip()
+            except Exception:
+                pass
 
     def merge_multipage_tables(
         self,
@@ -236,7 +277,10 @@ class TableRecognizer:
 
         img_array = np.array(table_img)
         gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-        _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+        # Use adaptive threshold to catch light-gray borders too
+        binary = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 5
+        )
 
         h, w = binary.shape
 
