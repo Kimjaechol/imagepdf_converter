@@ -1,7 +1,8 @@
 # Pipeline Configuration
 pipeline:
+  mode: unified_vision  # unified_vision (1 Gemini call) | standard (multi-step)
   pages_per_chunk: 10
-  max_workers: 4
+  max_workers: 8
   dpi: 300
   output_formats:
     - html

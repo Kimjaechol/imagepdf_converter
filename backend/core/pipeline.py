@@ -32,6 +32,7 @@ from .page_renderer import PageRenderer
 from .pdf_splitter import PdfSplitter
 from .reading_order import ReadingOrderRefiner
 from .table_recognizer import TableRecognizer
+from .unified_vision import UnifiedVisionProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class PipelineConfig:
     max_workers: int = 4
     dpi: int = 300
     output_formats: list[str] = field(default_factory=lambda: ["html", "markdown"])
+    # Pipeline mode: "standard" (multi-step) | "unified_vision" (single Gemini call)
+    pipeline_mode: str = "unified_vision"
     # Sub-configs
     layout_engine: str = "surya"
     layout_confidence: float = 0.5
@@ -86,6 +89,7 @@ class PipelineConfig:
             max_workers=pipe.get("max_workers", 4),
             dpi=pipe.get("dpi", 300),
             output_formats=pipe.get("output_formats", ["html", "markdown"]),
+            pipeline_mode=pipe.get("mode", "unified_vision"),
             layout_engine=layout.get("engine", "surya"),
             layout_confidence=layout.get("confidence_threshold", 0.5),
             ocr_engine=ocr.get("engine", "surya"),
@@ -157,6 +161,9 @@ class Pipeline:
             ollama_base_url=self.cfg.ollama_base_url,
             aggressiveness=self.cfg.correction_aggressiveness,
         )
+        self.unified_vision = UnifiedVisionProcessor(
+            gemini_model=self.cfg.gemini_model,
+        )
         self.merger = ChunkMerger(merge_multipage_tables=self.cfg.merge_multipage_tables)
         self.html_renderer = HtmlRenderer(
             simplified=self.cfg.html_simplified,
@@ -193,14 +200,23 @@ class Pipeline:
         self.progress_callback("Merging results", 0.75)
         all_pages = self.merger.merge(chunk_results)
 
-        # 4. Document-level heading classification
-        self.progress_callback("Classifying headings", 0.80)
-        all_blocks = [b for p in all_pages for b in p.blocks]
-        all_blocks = self.heading_clf.classify(all_blocks)
+        if self.cfg.pipeline_mode != "unified_vision":
+            # Standard mode: separate heading classification and correction
+            # 4. Document-level heading classification
+            self.progress_callback("Classifying headings", 0.80)
+            all_blocks = [b for p in all_pages for b in p.blocks]
+            all_blocks = self.heading_clf.classify(all_blocks)
 
-        # 5. Language correction (after structure is finalized)
-        self.progress_callback("Correcting text", 0.85)
-        all_blocks = self.correction.correct(all_blocks)
+            # 5. Language correction (after structure is finalized)
+            self.progress_callback("Correcting text", 0.85)
+            all_blocks = self.correction.correct(all_blocks)
+        else:
+            # Unified vision mode: heading + correction already done in the
+            # single Gemini call.  Only apply dictionary-based Hanja correction
+            # as a safety net.
+            self.progress_callback("Applying dictionary corrections", 0.82)
+            all_blocks = [b for p in all_pages for b in p.blocks]
+            all_blocks = self.correction.correct_dictionary_only(all_blocks)
 
         # 6. Render outputs
         self.progress_callback("Rendering output", 0.90)
@@ -303,7 +319,70 @@ class Pipeline:
         images_dir: Path,
         output_images_dir: Path,
     ) -> ChunkResult:
-        """Process a single chunk through the full pipeline."""
+        """Process a single chunk through the pipeline."""
+        if self.cfg.pipeline_mode == "unified_vision":
+            return self._process_chunk_unified(chunk, images_dir, output_images_dir)
+        return self._process_chunk_standard(chunk, images_dir, output_images_dir)
+
+    def _process_chunk_unified(
+        self,
+        chunk: PdfChunk,
+        images_dir: Path,
+        output_images_dir: Path,
+    ) -> ChunkResult:
+        """Process a chunk via single unified Gemini Vision call.
+
+        Steps:
+          1. Render pages to images
+          2. (Optional) Quick local OCR for digital PDF text hints
+          3. Send all page images + text hints to Gemini in ONE call
+          4. Gemini returns: layout, tables, text, headings, reading order
+          5. Extract figure/equation images locally
+        """
+        page_data_list = self.renderer.render_chunk(chunk, images_dir)
+
+        # Gather any digital text as hints for Gemini
+        ocr_hints: dict[int, list[LayoutBlock]] = {}
+        for pd in page_data_list:
+            digital_blocks = pd.get("digital_blocks", [])
+            if digital_blocks:
+                ocr_hints[pd["page_index"]] = digital_blocks
+
+        # Single unified Gemini call for all pages in this chunk
+        page_results = self.unified_vision.process_pages(
+            page_data_list, ocr_hints
+        )
+
+        # Fallback: if unified vision failed, use standard pipeline
+        if not page_results:
+            logger.warning(
+                "Unified vision failed for chunk %d, falling back to standard.",
+                chunk.chunk_index,
+            )
+            return self._process_chunk_standard(chunk, images_dir, output_images_dir)
+
+        # Extract images (figures, equations) – still done locally
+        image_extractor = ImageExtractor(output_dir=output_images_dir)
+        for pr, pd in zip(page_results, page_data_list):
+            img_path = pd["image_path"]
+            pr.blocks = image_extractor.extract_images(
+                img_path, pr.blocks, pr.page_index
+            )
+
+        return ChunkResult(
+            chunk_index=chunk.chunk_index,
+            start_page=chunk.start_page,
+            end_page=chunk.end_page,
+            pages=page_results,
+        )
+
+    def _process_chunk_standard(
+        self,
+        chunk: PdfChunk,
+        images_dir: Path,
+        output_images_dir: Path,
+    ) -> ChunkResult:
+        """Process a single chunk through the standard multi-step pipeline."""
         # 1. Render pages to images
         page_data_list = self.renderer.render_chunk(chunk, images_dir)
 

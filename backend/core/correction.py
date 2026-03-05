@@ -56,6 +56,20 @@ class CorrectionEngine:
 
         return blocks
 
+    def correct_dictionary_only(self, blocks: list[LayoutBlock]) -> list[LayoutBlock]:
+        """Apply only dictionary/rule-based corrections (no LLM call).
+
+        Used in unified_vision mode where Gemini already did text correction.
+        This adds Hanja Cheongan and symbol corrections as a safety net.
+        """
+        blocks = self._correct_hanja_cheongan(blocks)
+        for block in blocks:
+            if not block.text:
+                continue
+            block.text = self._apply_symbol_corrections(block.text)
+            block.text = self._apply_dictionary_corrections(block.text)
+        return blocks
+
     def add_custom_term(self, correct: str, confused_with: list[str]) -> None:
         """Add a user-defined correction term."""
         self._dict.setdefault("user_custom", {})[correct] = {
