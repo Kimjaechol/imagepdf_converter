@@ -134,11 +134,16 @@ fn parse_slide_xml(xml: &str) -> String {
     let mut in_text_body = false;
     let mut in_run = false;
     let mut is_bold = false;
+    let mut is_italic = false;
+    let mut is_underline = false;
+    let mut run_font_size: Option<f32> = None;
     let mut is_title = false;
+    let mut is_subtitle = false;
     let mut current_text = String::new();
     let mut para_texts: Vec<String> = Vec::new();
     let mut is_list_item = false;
     let mut list_level: i32 = -1;
+    let mut _para_alignment: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -151,14 +156,64 @@ fn parse_slide_xml(xml: &str) -> String {
                     }
                     "p" if in_text_body => {
                         current_text.clear();
-                        is_bold = false;
                         is_list_item = false;
+                        _para_alignment = None;
                     }
                     "r" if in_text_body => {
                         in_run = true;
+                        is_bold = false;
+                        is_italic = false;
+                        is_underline = false;
+                        run_font_size = None;
                     }
                     "b" if in_text_body => {
-                        is_bold = true;
+                        // Check for val="0" (explicitly not bold)
+                        let mut val_off = false;
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "val" {
+                                let v = String::from_utf8_lossy(&attr.value);
+                                if v == "0" || v == "false" {
+                                    val_off = true;
+                                }
+                            }
+                        }
+                        if !val_off { is_bold = true; }
+                    }
+                    "i" if in_text_body => {
+                        let mut val_off = false;
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "val" {
+                                let v = String::from_utf8_lossy(&attr.value);
+                                if v == "0" || v == "false" {
+                                    val_off = true;
+                                }
+                            }
+                        }
+                        if !val_off { is_italic = true; }
+                    }
+                    "u" if in_text_body => {
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "val" {
+                                let v = String::from_utf8_lossy(&attr.value);
+                                if v != "none" {
+                                    is_underline = true;
+                                }
+                            }
+                        }
+                    }
+                    "sz" if in_text_body && in_run => {
+                        // Font size in hundredths of a point
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "val" {
+                                if let Ok(hp) = String::from_utf8_lossy(&attr.value).parse::<f32>() {
+                                    run_font_size = Some(hp / 100.0);
+                                }
+                            }
+                        }
                     }
                     "buChar" | "buAutoNum" => {
                         is_list_item = true;
@@ -171,16 +226,22 @@ fn parse_slide_xml(xml: &str) -> String {
                                     .parse()
                                     .unwrap_or(0);
                             }
+                            if key == "algn" {
+                                _para_alignment = Some(
+                                    String::from_utf8_lossy(&attr.value).to_lowercase()
+                                );
+                            }
                         }
                     }
                     "ph" => {
-                        // Placeholder type
                         for attr in e.attributes().flatten() {
                             let key = local_name(attr.key.as_ref());
                             if key == "type" {
                                 let val = String::from_utf8_lossy(&attr.value);
                                 if val == "title" || val == "ctrTitle" {
                                     is_title = true;
+                                } else if val == "subTitle" {
+                                    is_subtitle = true;
                                 }
                             }
                         }
@@ -196,11 +257,28 @@ fn parse_slide_xml(xml: &str) -> String {
                     let text = e.unescape().unwrap_or_default().to_string();
                     if !text.is_empty() {
                         let escaped = html_escape::encode_text(&text).to_string();
-                        if is_bold {
-                            current_text.push_str(&format!("<strong>{}</strong>", escaped));
-                        } else {
-                            current_text.push_str(&escaped);
+                        // Build inline style
+                        let mut style_parts = Vec::new();
+                        if let Some(fs) = run_font_size {
+                            if (fs - 12.0).abs() > 0.5 {
+                                style_parts.push(format!("font-size:{:.0}pt", fs));
+                            }
                         }
+                        let mut segment = if style_parts.is_empty() {
+                            escaped
+                        } else {
+                            format!("<span style=\"{}\">{}</span>", style_parts.join(";"), escaped)
+                        };
+                        if is_bold {
+                            segment = format!("<strong>{}</strong>", segment);
+                        }
+                        if is_italic {
+                            segment = format!("<em>{}</em>", segment);
+                        }
+                        if is_underline {
+                            segment = format!("<u>{}</u>", segment);
+                        }
+                        current_text.push_str(&segment);
                     }
                 }
             }
@@ -210,7 +288,6 @@ fn parse_slide_xml(xml: &str) -> String {
                 match local {
                     "txBody" => {
                         in_text_body = false;
-                        // Flush paragraphs
                         if !para_texts.is_empty() {
                             if is_title {
                                 for t in &para_texts {
@@ -219,6 +296,13 @@ fn parse_slide_xml(xml: &str) -> String {
                                     }
                                 }
                                 is_title = false;
+                            } else if is_subtitle {
+                                for t in &para_texts {
+                                    if !t.trim().is_empty() {
+                                        html.push_str(&format!("<h2>{}</h2>\n", t));
+                                    }
+                                }
+                                is_subtitle = false;
                             } else {
                                 for t in &para_texts {
                                     if !t.trim().is_empty() {
@@ -244,7 +328,6 @@ fn parse_slide_xml(xml: &str) -> String {
                     }
                     "r" => {
                         in_run = false;
-                        is_bold = false;
                     }
                     _ => {}
                 }

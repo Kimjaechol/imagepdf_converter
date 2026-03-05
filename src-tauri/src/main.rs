@@ -5,7 +5,7 @@ mod commands;
 mod document;
 mod moa;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn main() {
     tracing_subscriber::fmt::init();

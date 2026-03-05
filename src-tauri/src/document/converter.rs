@@ -111,14 +111,55 @@ pub struct DocMeta {
     pub author: Option<String>,
 }
 
+/// Extract just the tag name from a tag buffer (e.g. "img src=\"...\"" → "img")
+fn extract_tag_name(tag_buf: &str) -> &str {
+    let tag = tag_buf.trim();
+    // Handle closing tags: "/td", "/tr" etc.
+    if tag.starts_with('/') {
+        let rest = &tag[1..];
+        rest.split_whitespace().next().unwrap_or(rest)
+            .split('/')
+            .next()
+            .unwrap_or(rest)
+    } else {
+        tag.split_whitespace().next().unwrap_or(tag)
+            .split('/')
+            .next()
+            .unwrap_or(tag)
+    }
+}
+
+/// Extract attribute value from tag buffer: e.g. extract_attr("img src=\"foo.png\"", "src") → Some("foo.png")
+fn extract_attr<'a>(tag_buf: &'a str, attr_name: &str) -> Option<String> {
+    let search = format!("{}=\"", attr_name);
+    if let Some(start) = tag_buf.find(&search) {
+        let val_start = start + search.len();
+        if let Some(end) = tag_buf[val_start..].find('"') {
+            return Some(tag_buf[val_start..val_start + end].to_string());
+        }
+    }
+    // Also try single quotes
+    let search_sq = format!("{}='", attr_name);
+    if let Some(start) = tag_buf.find(&search_sq) {
+        let val_start = start + search_sq.len();
+        if let Some(end) = tag_buf[val_start..].find('\'') {
+            return Some(tag_buf[val_start..val_start + end].to_string());
+        }
+    }
+    None
+}
+
 /// Simple HTML → Markdown converter
+#[allow(unused_assignments)]
 fn html_to_markdown(html: &str) -> String {
     let mut md = String::new();
     let mut in_tag = false;
     let mut tag_buf = String::new();
     let mut chars = html.chars().peekable();
+    let mut col_count: usize = 0;
+    let mut row_col_count: usize = 0;
+    let mut first_row_done = false;
 
-    // Simple state machine for HTML → Markdown
     while let Some(c) = chars.next() {
         if c == '<' {
             in_tag = true;
@@ -127,35 +168,73 @@ fn html_to_markdown(html: &str) -> String {
         }
         if c == '>' && in_tag {
             in_tag = false;
-            let tag = tag_buf.trim().to_lowercase();
-            match tag.as_str() {
-                "h1" => md.push_str("\n# "),
-                "h2" => md.push_str("\n## "),
-                "h3" => md.push_str("\n### "),
-                "h4" => md.push_str("\n#### "),
-                "h5" => md.push_str("\n##### "),
-                "h6" => md.push_str("\n###### "),
-                "/h1" | "/h2" | "/h3" | "/h4" | "/h5" | "/h6" => md.push_str("\n\n"),
-                "p" => md.push('\n'),
-                "/p" => md.push_str("\n\n"),
-                "br" | "br/" | "br /" => md.push('\n'),
+            let full_tag = tag_buf.trim().to_lowercase();
+            let tag_name = extract_tag_name(&full_tag);
+            let is_closing = full_tag.starts_with('/');
+
+            match tag_name {
+                "h1" if !is_closing => md.push_str("\n# "),
+                "h2" if !is_closing => md.push_str("\n## "),
+                "h3" if !is_closing => md.push_str("\n### "),
+                "h4" if !is_closing => md.push_str("\n#### "),
+                "h5" if !is_closing => md.push_str("\n##### "),
+                "h6" if !is_closing => md.push_str("\n###### "),
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" if is_closing => md.push_str("\n\n"),
+                "p" if !is_closing => md.push('\n'),
+                "p" if is_closing => md.push_str("\n\n"),
+                "br" => md.push('\n'),
                 "strong" | "b" => md.push_str("**"),
-                "/strong" | "/b" => md.push_str("**"),
-                "em" | "i" => md.push('*'),
-                "/em" | "/i" => md.push('*'),
-                "li" => md.push_str("\n- "),
-                "/li" => {}
-                "tr" => md.push('\n'),
-                "th" | "td" => md.push_str("| "),
-                "/th" | "/td" => md.push(' '),
-                "/tr" => md.push('|'),
-                "hr" | "hr/" => md.push_str("\n---\n"),
-                "blockquote" => md.push_str("\n> "),
-                "/blockquote" => md.push('\n'),
+                "em" | "i" if tag_name == "em" || tag_name == "i" => md.push('*'),
+                "u" if !is_closing => md.push_str("<u>"),
+                "u" if is_closing => md.push_str("</u>"),
+                "li" if !is_closing => md.push_str("\n- "),
+                "li" if is_closing => {}
+                "ul" | "ol" => {}
+                "thead" | "tbody" => {}
+                "table" if !is_closing => {
+                    md.push('\n');
+                    col_count = 0;
+                    first_row_done = false;
+                }
+                "table" if is_closing => md.push('\n'),
+                "tr" if !is_closing => {
+                    md.push('\n');
+                    row_col_count = 0;
+                }
+                "tr" if is_closing => {
+                    md.push('|');
+                    // After first row (header), emit separator
+                    if !first_row_done {
+                        col_count = row_col_count;
+                        first_row_done = true;
+                        md.push('\n');
+                        for _ci in 0..col_count {
+                            md.push_str("|---");
+                        }
+                        if col_count > 0 {
+                            md.push('|');
+                        }
+                    }
+                }
+                "th" | "td" if !is_closing => {
+                    md.push_str("| ");
+                    row_col_count += 1;
+                }
+                "th" | "td" if is_closing => md.push(' '),
+                "hr" => md.push_str("\n---\n"),
+                "blockquote" if !is_closing => md.push_str("\n> "),
+                "blockquote" if is_closing => md.push('\n'),
                 "code" => md.push('`'),
-                "/code" => md.push('`'),
-                "pre" => md.push_str("\n```\n"),
-                "/pre" => md.push_str("\n```\n"),
+                "pre" if !is_closing => md.push_str("\n```\n"),
+                "pre" if is_closing => md.push_str("\n```\n"),
+                "img" => {
+                    // Handle <img src="..." alt="...">
+                    let src = extract_attr(&full_tag, "src").unwrap_or_default();
+                    let alt = extract_attr(&full_tag, "alt").unwrap_or_else(|| "image".to_string());
+                    md.push_str(&format!("![{}]({})", alt, src));
+                }
+                "figure" | "figcaption" | "span" | "div" | "section" | "article"
+                | "header" | "footer" | "nav" | "aside" | "main" => {}
                 _ => {}
             }
             continue;
@@ -171,6 +250,9 @@ fn html_to_markdown(html: &str) -> String {
                         chars.next();
                         break;
                     }
+                    if entity.len() > 10 {
+                        break; // not a real entity
+                    }
                     entity.push(nc);
                     chars.next();
                 }
@@ -180,10 +262,37 @@ fn html_to_markdown(html: &str) -> String {
                     "gt" => md.push('>'),
                     "quot" => md.push('"'),
                     "nbsp" => md.push(' '),
+                    "apos" => md.push('\''),
+                    "#39" => md.push('\''),
+                    "#x27" => md.push('\''),
+                    "mdash" => md.push('—'),
+                    "ndash" => md.push('–'),
+                    "hellip" => md.push_str("..."),
+                    "laquo" => md.push('«'),
+                    "raquo" => md.push('»'),
+                    "ldquo" => md.push('\u{201C}'),
+                    "rdquo" => md.push('\u{201D}'),
                     _ => {
-                        md.push('&');
-                        md.push_str(&entity);
-                        md.push(';');
+                        // Handle numeric entities &#NNN;
+                        if entity.starts_with('#') {
+                            let num_str = &entity[1..];
+                            let code = if num_str.starts_with('x') || num_str.starts_with('X') {
+                                u32::from_str_radix(&num_str[1..], 16).ok()
+                            } else {
+                                num_str.parse::<u32>().ok()
+                            };
+                            if let Some(ch) = code.and_then(char::from_u32) {
+                                md.push(ch);
+                            } else {
+                                md.push('&');
+                                md.push_str(&entity);
+                                md.push(';');
+                            }
+                        } else {
+                            md.push('&');
+                            md.push_str(&entity);
+                            md.push(';');
+                        }
                     }
                 }
             } else {

@@ -195,8 +195,10 @@ class OcrEngine:
                 int(block.bbox.x1),
                 int(block.bbox.y1),
             ))
+            # Preprocess for better OCR accuracy
+            processed = self._preprocess_image(cropped)
             text = pytesseract.image_to_string(
-                cropped,
+                processed,
                 lang=lang_str,
                 config=self.tesseract_config,
             )
@@ -267,5 +269,31 @@ class OcrEngine:
     # ------------------------------------------------------------------
 
     def _tesseract_lang_codes(self) -> list[str]:
-        mapping = {"ko": "kor", "en": "eng", "zh": "chi_sim", "ja": "jpn"}
+        mapping = {
+            "ko": "kor", "en": "eng", "zh": "chi_sim", "zh-tw": "chi_tra",
+            "ja": "jpn", "de": "deu", "fr": "fra", "es": "spa", "it": "ita",
+            "pt": "por", "ru": "rus", "ar": "ara", "vi": "vie", "th": "tha",
+            "hi": "hin", "nl": "nld", "sv": "swe", "pl": "pol", "tr": "tur",
+        }
         return [mapping.get(lang, lang) for lang in self.languages]
+
+    @staticmethod
+    def _preprocess_image(img: Image.Image) -> Image.Image:
+        """Apply preprocessing to improve OCR accuracy."""
+        import numpy as np
+        arr = np.array(img)
+        # Convert to grayscale if color
+        if len(arr.shape) == 3:
+            gray = np.mean(arr, axis=2).astype(np.uint8)
+        else:
+            gray = arr
+        # Enhance contrast via CLAHE
+        try:
+            import cv2
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+            # Denoise
+            denoised = cv2.fastNlMeansDenoising(enhanced, None, 10, 7, 21)
+            return Image.fromarray(denoised).convert("RGB")
+        except ImportError:
+            return img

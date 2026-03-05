@@ -119,6 +119,7 @@ img {{ max-width: 100%; height: auto; }}
     Ok((full_html, images, meta))
 }
 
+#[allow(unused_assignments)]
 fn parse_hwpx_section(xml: &str) -> String {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -131,7 +132,11 @@ fn parse_hwpx_section(xml: &str) -> String {
     let mut text_buf = String::new();
     let mut is_bold = false;
     let mut is_italic = false;
+    let mut is_underline = false;
     let mut para_style = String::new();
+    let mut para_alignment: Option<String> = None;
+    let mut cell_colspan: u32 = 1;
+    let mut cell_rowspan: u32 = 1;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -144,10 +149,15 @@ fn parse_hwpx_section(xml: &str) -> String {
                         text_buf.clear();
                         is_bold = false;
                         is_italic = false;
+                        is_underline = false;
                         para_style.clear();
+                        para_alignment = None;
                     }
                     "run" => {
                         in_run = true;
+                        is_bold = false;
+                        is_italic = false;
+                        is_underline = false;
                     }
                     "bold" => {
                         is_bold = true;
@@ -155,13 +165,26 @@ fn parse_hwpx_section(xml: &str) -> String {
                     "italic" => {
                         is_italic = true;
                     }
+                    "underline" => {
+                        is_underline = true;
+                    }
+                    "strikeout" => {}
                     "pPr" | "paraStyle" => {
-                        // Paragraph style - check for heading
                         for attr in e.attributes().flatten() {
                             let key = local_name(attr.key.as_ref());
                             if key == "id" || key == "paraPrIDRef" {
                                 para_style =
                                     String::from_utf8_lossy(&attr.value).to_string();
+                            }
+                        }
+                    }
+                    "align" if in_paragraph => {
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "horizontal" || key == "val" {
+                                para_alignment = Some(
+                                    String::from_utf8_lossy(&attr.value).to_lowercase()
+                                );
                             }
                         }
                     }
@@ -173,7 +196,28 @@ fn parse_hwpx_section(xml: &str) -> String {
                     }
                     "tc" => {
                         in_table_cell = true;
-                        html.push_str("<td>");
+                        cell_colspan = 1;
+                        cell_rowspan = 1;
+                        // Check for cell span attributes
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "colSpan" || key == "colspan" {
+                                cell_colspan = String::from_utf8_lossy(&attr.value)
+                                    .parse().unwrap_or(1);
+                            }
+                            if key == "rowSpan" || key == "rowspan" {
+                                cell_rowspan = String::from_utf8_lossy(&attr.value)
+                                    .parse().unwrap_or(1);
+                            }
+                        }
+                        let mut attrs = String::new();
+                        if cell_colspan > 1 {
+                            attrs.push_str(&format!(" colspan=\"{}\"", cell_colspan));
+                        }
+                        if cell_rowspan > 1 {
+                            attrs.push_str(&format!(" rowspan=\"{}\"", cell_rowspan));
+                        }
+                        html.push_str(&format!("<td{}>", attrs));
                     }
                     "lineseg" | "lineBreak" => {
                         text_buf.push_str("<br>");
@@ -192,6 +236,9 @@ fn parse_hwpx_section(xml: &str) -> String {
                         if is_italic {
                             segment = format!("<em>{}</em>", segment);
                         }
+                        if is_underline {
+                            segment = format!("<u>{}</u>", segment);
+                        }
                         text_buf.push_str(&segment);
                     }
                 }
@@ -206,13 +253,16 @@ fn parse_hwpx_section(xml: &str) -> String {
                                 html.push_str(&text_buf);
                             } else if is_heading_style(&para_style) {
                                 let level = heading_level_from_style(&para_style);
+                                let align_attr = hwpx_align_style(para_alignment.as_deref());
                                 html.push_str(&format!(
-                                    "<h{l}>{}</h{l}>\n",
+                                    "<h{l}{a}>{}</h{l}>\n",
                                     text_buf,
-                                    l = level
+                                    l = level,
+                                    a = align_attr
                                 ));
                             } else {
-                                html.push_str(&format!("<p>{}</p>\n", text_buf));
+                                let align_attr = hwpx_align_style(para_alignment.as_deref());
+                                html.push_str(&format!("<p{}>{}</p>\n", align_attr, text_buf));
                             }
                         }
                         text_buf.clear();
@@ -263,6 +313,15 @@ fn heading_level_from_style(style: &str) -> u8 {
         .parse()
         .unwrap_or(1);
     num.clamp(1, 6)
+}
+
+fn hwpx_align_style(alignment: Option<&str>) -> String {
+    match alignment {
+        Some("center") => " style=\"text-align:center\"".to_string(),
+        Some("right") => " style=\"text-align:right\"".to_string(),
+        Some("justify") | Some("both") => " style=\"text-align:justify\"".to_string(),
+        _ => String::new(),
+    }
 }
 
 fn extract_between(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
