@@ -82,6 +82,62 @@ class LayoutDetector:
 
         return blocks
 
+    def detect_line_regions(
+        self,
+        lines: list[dict],
+        page_index: int,
+        page_width: float,
+        page_height: float,
+    ) -> list[LayoutBlock]:
+        """Detect regions bounded by structural lines (tables, boxed areas).
+
+        This is used by the hybrid digital-PDF strategy: regions with
+        structural borders need image-based processing (AI + OCR) because
+        directly extracting digital text from those regions scrambles the
+        reading order when the borders are removed.
+
+        Returns LayoutBlock instances with block_type TABLE or BOX.
+        """
+        structural = [
+            ln for ln in lines
+            if ln["type"] == "rect"
+            or (ln["type"] == "line" and ln.get("line_class") == "structural")
+        ]
+        if not structural:
+            return []
+
+        # Detect table regions from structural lines
+        table_regions = self._detect_tables_from_lines(structural, page_index)
+
+        # Also detect large rectangles that are not tables (boxed text areas)
+        for ln in structural:
+            if ln["type"] != "rect":
+                continue
+            rw = abs(ln["x1"] - ln["x0"])
+            rh = abs(ln["y1"] - ln["y0"])
+            # Large rectangles that aren't already covered by a table region
+            if rw > page_width * 0.2 and rh > page_height * 0.05:
+                rect_bbox = BBox(
+                    x0=min(ln["x0"], ln["x1"]),
+                    y0=min(ln["y0"], ln["y1"]),
+                    x1=max(ln["x0"], ln["x1"]),
+                    y1=max(ln["y0"], ln["y1"]),
+                )
+                already_covered = any(
+                    rect_bbox.overlap_ratio(tr.bbox) > 0.5
+                    for tr in table_regions if tr.bbox
+                )
+                if not already_covered:
+                    table_regions.append(LayoutBlock(
+                        id=f"box_vec_{page_index}_{uuid.uuid4().hex[:8]}",
+                        block_type=BlockType.BOX,
+                        bbox=rect_bbox,
+                        confidence=0.6,
+                        page_index=page_index,
+                    ))
+
+        return table_regions
+
     # ------------------------------------------------------------------
     # Surya layout engine
     # ------------------------------------------------------------------

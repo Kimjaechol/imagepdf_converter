@@ -206,19 +206,35 @@ class PageRenderer:
         return blocks
 
     def _extract_drawings(self, page: fitz.Page) -> list[dict]:
-        """Extract vector lines & rectangles – useful for table detection."""
+        """Extract vector lines & rectangles with classification.
+
+        Each drawing is classified as:
+          - "structural": horizontal/vertical borders (table edges, section
+            dividers, footnote separators).  These define reading zones.
+          - "annotation": non-orthogonal lines (arrows, leader lines, callout
+            connectors) used for pointing / explanation.
+          - "rect": rectangles (table cells, boxed regions).
+        """
+        page_width = page.rect.width * self._zoom
+        page_height = page.rect.height * self._zoom
         drawings = []
         for item in page.get_drawings():
             for path_item in item.get("items", []):
                 kind = path_item[0]  # "l" for line, "re" for rect, etc.
                 if kind == "l":
                     p1, p2 = path_item[1], path_item[2]
+                    x0 = p1.x * self._zoom
+                    y0 = p1.y * self._zoom
+                    x1 = p2.x * self._zoom
+                    y1 = p2.y * self._zoom
+                    line_class = self._classify_line(
+                        x0, y0, x1, y1, page_width, page_height,
+                    )
                     drawings.append({
                         "type": "line",
-                        "x0": p1.x * self._zoom,
-                        "y0": p1.y * self._zoom,
-                        "x1": p2.x * self._zoom,
-                        "y1": p2.y * self._zoom,
+                        "line_class": line_class,
+                        "x0": x0, "y0": y0,
+                        "x1": x1, "y1": y1,
                     })
                 elif kind == "re":
                     r = path_item[1]
@@ -230,3 +246,29 @@ class PageRenderer:
                         "y1": r.y1 * self._zoom,
                     })
         return drawings
+
+    @staticmethod
+    def _classify_line(
+        x0: float, y0: float, x1: float, y1: float,
+        page_width: float, page_height: float,
+    ) -> str:
+        """Classify a line as 'structural' or 'annotation'.
+
+        Structural lines are horizontal or vertical (table borders, section
+        dividers, footnote separators).  Annotation lines are diagonal /
+        non-orthogonal (arrows, leader lines, callout connectors).
+        """
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        length = (dx * dx + dy * dy) ** 0.5
+        if length < 5:
+            return "structural"  # tiny dot-like, harmless
+        # Angle from horizontal
+        angle_deg = 0.0
+        if length > 0:
+            import math
+            angle_deg = math.degrees(math.atan2(dy, dx))
+        # Horizontal (0°±5°) or vertical (90°±5°) → structural
+        if angle_deg <= 5 or angle_deg >= 85:
+            return "structural"
+        return "annotation"

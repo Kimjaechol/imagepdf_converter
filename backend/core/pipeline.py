@@ -317,29 +317,91 @@ class Pipeline:
             digital_blocks = page_data["digital_blocks"]
             lines = page_data["lines"]
 
-            # 2. Layout detection
-            layout_blocks = self.layout.detect(
-                img_path, page_idx, digital_blocks, lines
+            # -- Hybrid digital PDF strategy --
+            # If the page has digital text AND structural lines (tables /
+            # boxed regions), we must NOT blindly extract text from those
+            # regions because the reading order inside tables gets scrambled
+            # when borders are stripped away.
+            #
+            # Instead:
+            #   a) Detect which regions contain structural lines (tables,
+            #      boxed layouts) → process those via the image-based AI
+            #      pipeline (layout detect → OCR → table recognition).
+            #   b) For the remaining text-only regions, use the already-
+            #      extracted digital text blocks directly.
+            #   c) Merge both sets together.
+
+            has_digital_text = bool(digital_blocks)
+            structural_regions = self.layout.detect_line_regions(
+                lines, page_idx, width, height,
             )
+            has_structural = bool(structural_regions)
 
-            # 3. OCR (for blocks without digital text)
-            layout_blocks = self.ocr.ocr_page(img_path, layout_blocks, page_idx)
+            if has_digital_text and has_structural:
+                # Split digital blocks into "inside structural region" and
+                # "outside structural region"
+                outside_blocks: list[LayoutBlock] = []
+                for db in digital_blocks:
+                    if db.bbox and any(
+                        db.bbox.overlap_ratio(sr.bbox) > 0.5
+                        for sr in structural_regions if sr.bbox
+                    ):
+                        pass  # skip – will be handled by image pipeline
+                    else:
+                        outside_blocks.append(db)
 
-            # If no blocks detected, try full-page OCR
-            if not layout_blocks:
-                layout_blocks = self.ocr.ocr_full_page(img_path, page_idx)
+                # Image-based pipeline for structural regions only
+                layout_blocks = self.layout.detect(
+                    img_path, page_idx, None, lines,
+                )
+                layout_blocks = self.ocr.ocr_page(
+                    img_path, layout_blocks, page_idx,
+                )
+                # Table recognition for image-detected table blocks
+                layout_blocks = self.table_rec.recognize_all(
+                    img_path, layout_blocks,
+                )
 
-            # 4. Table structure recognition
-            layout_blocks = self.table_rec.recognize_all(img_path, layout_blocks)
+                # Merge: keep image-pipeline blocks that overlap structural
+                # regions, add digital text blocks for everything else
+                merged: list[LayoutBlock] = []
+                for lb in layout_blocks:
+                    if lb.bbox and any(
+                        lb.bbox.overlap_ratio(sr.bbox) > 0.3
+                        for sr in structural_regions if sr.bbox
+                    ):
+                        merged.append(lb)
+                merged.extend(outside_blocks)
+                layout_blocks = merged
+            else:
+                # 2. Layout detection (standard path)
+                layout_blocks = self.layout.detect(
+                    img_path, page_idx, digital_blocks, lines,
+                )
+
+                # 3. OCR (for blocks without digital text)
+                layout_blocks = self.ocr.ocr_page(
+                    img_path, layout_blocks, page_idx,
+                )
+
+                # If no blocks detected, try full-page OCR
+                if not layout_blocks:
+                    layout_blocks = self.ocr.ocr_full_page(img_path, page_idx)
+
+                # 4. Table structure recognition
+                layout_blocks = self.table_rec.recognize_all(
+                    img_path, layout_blocks,
+                )
 
             # 5. Extract images (figures, equations)
             layout_blocks = image_extractor.extract_images(
                 img_path, layout_blocks, page_idx
             )
 
-            # 6. Reading order refinement
+            # 6. Reading order refinement (line-based zones + fallback)
             layout_blocks = self.reading_order.refine(
-                layout_blocks, width, height, img_path, page_idx
+                layout_blocks, width, height, img_path, page_idx,
+                vector_lines=lines,
             )
 
             page_results.append(PageResult(
