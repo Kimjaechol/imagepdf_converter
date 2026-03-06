@@ -1,6 +1,7 @@
 use super::converter::DocMeta;
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use std::collections::HashMap;
 use std::io::Read;
 use zip::ZipArchive;
 
@@ -81,12 +82,22 @@ fn convert_sync(path: &str) -> Result<(String, Vec<(String, Vec<u8>)>, DocMeta),
             let _ = slide.read_to_string(&mut slide_xml);
         }
 
+        // Parse slide-level relationships for images
+        // e.g. ppt/slides/_rels/slide1.xml.rels
+        let rels_name = slide_name.replace("slides/", "slides/_rels/") + ".rels";
+        let mut slide_rels: HashMap<String, String> = HashMap::new();
+        if let Ok(mut rels) = archive.by_name(&rels_name) {
+            let mut rels_xml = String::new();
+            let _ = rels.read_to_string(&mut rels_xml);
+            slide_rels = parse_pptx_relationships(&rels_xml);
+        }
+
         body_html.push_str(&format!(
             "<div class=\"slide\" id=\"slide-{}\">\n<div class=\"slide-header\">슬라이드 {}</div>\n",
             idx + 1,
             idx + 1
         ));
-        body_html.push_str(&parse_slide_xml(&slide_xml));
+        body_html.push_str(&parse_slide_xml(&slide_xml, &slide_rels));
         body_html.push_str("</div>\n");
     }
 
@@ -125,7 +136,7 @@ img {{ max-width: 100%; height: auto; border-radius: 4px; }}
     Ok((full_html, images, meta))
 }
 
-fn parse_slide_xml(xml: &str) -> String {
+fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
@@ -144,6 +155,14 @@ fn parse_slide_xml(xml: &str) -> String {
     let mut is_list_item = false;
     let mut list_level: i32 = -1;
     let mut _para_alignment: Option<String> = None;
+    // Table state
+    let mut in_table = false;
+    let mut _in_table_row = false;
+    let mut in_table_cell = false;
+    let mut first_table_row = true;
+    let mut table_cell_text = String::new();
+    // Image state
+    let mut in_blip_fill = false;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -218,6 +237,41 @@ fn parse_slide_xml(xml: &str) -> String {
                     "buChar" | "buAutoNum" => {
                         is_list_item = true;
                     }
+                    // Image: a:blip with r:embed
+                    "blipFill" => {
+                        in_blip_fill = true;
+                    }
+                    "blip" if in_blip_fill => {
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "embed" {
+                                let rid = String::from_utf8_lossy(&attr.value).to_string();
+                                if let Some(filename) = rels.get(&rid) {
+                                    html.push_str(&format!(
+                                        "<img src=\"images/{}\" alt=\"{}\">\n",
+                                        html_escape::encode_text(filename),
+                                        html_escape::encode_text(filename)
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    // Table support
+                    "tbl" if !in_text_body => {
+                        in_table = true;
+                        first_table_row = true;
+                        html.push_str("<table>\n<thead>\n");
+                    }
+                    "tr" if in_table => {
+                        _in_table_row = true;
+                        html.push_str("<tr>");
+                    }
+                    "tc" if in_table => {
+                        in_table_cell = true;
+                        table_cell_text.clear();
+                        let cell_tag = if first_table_row { "th" } else { "td" };
+                        html.push_str(&format!("<{}>", cell_tag));
+                    }
                     "pPr" if in_text_body => {
                         for attr in e.attributes().flatten() {
                             let key = local_name(attr.key.as_ref());
@@ -278,7 +332,11 @@ fn parse_slide_xml(xml: &str) -> String {
                         if is_underline {
                             segment = format!("<u>{}</u>", segment);
                         }
-                        current_text.push_str(&segment);
+                        if in_table_cell {
+                            table_cell_text.push_str(&segment);
+                        } else {
+                            current_text.push_str(&segment);
+                        }
                     }
                 }
             }
@@ -329,6 +387,33 @@ fn parse_slide_xml(xml: &str) -> String {
                     "r" => {
                         in_run = false;
                     }
+                    "blipFill" => {
+                        in_blip_fill = false;
+                    }
+                    "tc" if in_table => {
+                        in_table_cell = false;
+                        html.push_str(&table_cell_text);
+                        let cell_tag = if first_table_row { "th" } else { "td" };
+                        html.push_str(&format!("</{}>", cell_tag));
+                        table_cell_text.clear();
+                    }
+                    "tr" if in_table => {
+                        _in_table_row = false;
+                        html.push_str("</tr>\n");
+                        if first_table_row {
+                            first_table_row = false;
+                            html.push_str("</thead>\n<tbody>\n");
+                        }
+                    }
+                    "tbl" if in_table => {
+                        in_table = false;
+                        if !first_table_row {
+                            html.push_str("</tbody>\n");
+                        } else {
+                            html.push_str("</thead>\n");
+                        }
+                        html.push_str("</table>\n");
+                    }
                     _ => {}
                 }
             }
@@ -362,6 +447,49 @@ fn extract_between(text: &str, start_tag: &str, end_tag: &str) -> Option<String>
     } else {
         Some(val.to_string())
     }
+}
+
+/// Parse slide-level relationships (ppt/slides/_rels/slideN.xml.rels)
+/// Maps rId → media filename (e.g. "rId2" → "image1.png")
+fn parse_pptx_relationships(xml: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
+                if local == "Relationship" {
+                    let mut rid: Option<String> = None;
+                    let mut target: Option<String> = None;
+                    for attr in e.attributes().flatten() {
+                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                        match key {
+                            "Id" => rid = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                            "Target" => target = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                            _ => {}
+                        }
+                    }
+                    if let (Some(id), Some(tgt)) = (rid, target) {
+                        // Target is relative: ../media/image1.png
+                        if tgt.contains("media/") {
+                            let filename = tgt.rsplit('/').next().unwrap_or(&tgt).to_string();
+                            map.insert(id, filename);
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    map
 }
 
 fn local_name(name: &[u8]) -> &str {

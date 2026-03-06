@@ -1,6 +1,7 @@
 use super::converter::DocMeta;
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use std::collections::HashMap;
 use std::io::Read;
 use zip::ZipArchive;
 
@@ -54,6 +55,15 @@ fn convert_sync(path: &str) -> Result<(String, Vec<(String, Vec<u8>)>, DocMeta),
         }
     }
 
+    // Parse word/_rels/document.xml.rels for image relationship IDs
+    // Maps rId (e.g. "rId5") → filename (e.g. "image1.png")
+    let mut rel_to_image: HashMap<String, String> = HashMap::new();
+    if let Ok(mut rels) = archive.by_name("word/_rels/document.xml.rels") {
+        let mut rels_xml = String::new();
+        let _ = rels.read_to_string(&mut rels_xml);
+        rel_to_image = parse_relationships(&rels_xml);
+    }
+
     // Parse word/document.xml
     let mut doc_xml = String::new();
     {
@@ -64,7 +74,7 @@ fn convert_sync(path: &str) -> Result<(String, Vec<(String, Vec<u8>)>, DocMeta),
             .map_err(|e| format!("Cannot read document.xml: {}", e))?;
     }
 
-    let html = parse_document_xml(&doc_xml, &images);
+    let html = parse_document_xml(&doc_xml, &images, &rel_to_image);
 
     let page_count = html.matches("<div class=\"page-break\"").count() as u32 + 1;
     meta.page_count = Some(page_count.max(1));
@@ -100,7 +110,11 @@ blockquote {{ border-left: 4px solid #ccc; margin: 16px 0; padding: 8px 16px; co
     Ok((full_html, images, meta))
 }
 
-fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
+fn parse_document_xml(
+    xml: &str,
+    images: &[(String, Vec<u8>)],
+    rel_to_image: &HashMap<String, String>,
+) -> String {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut html = String::new();
@@ -118,6 +132,8 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
     let mut is_list_item = false;
     let mut _list_num_id: Option<String> = None;
     let mut in_table = false;
+    let mut _in_table_row = false;
+    let mut first_table_row = true;
     let mut in_table_cell = false;
     let mut cell_colspan: u32 = 1;
     let mut _cell_vmerge_restart = false;
@@ -127,6 +143,8 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
     let mut in_run_props = false;
     let mut in_para_props = false;
     let mut in_cell_props = false;
+    let mut in_drawing = false;
+    let mut drawing_embed_id: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -217,9 +235,11 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
                     }
                     "tbl" => {
                         in_table = true;
-                        html.push_str("<table>\n");
+                        first_table_row = true;
+                        html.push_str("<table>\n<thead>\n");
                     }
                     "tr" if in_table => {
+                        _in_table_row = true;
                         html.push_str("<tr>");
                     }
                     "tc" if in_table => {
@@ -246,14 +266,18 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
                         }
                     }
                     "drawing" | "pict" => {
-                        if image_idx < images.len() {
-                            let (name, _) = &images[image_idx];
-                            text_buf.push_str(&format!(
-                                "<img src=\"images/{}\" alt=\"{}\">",
-                                html_escape::encode_text(name),
-                                html_escape::encode_text(name)
-                            ));
-                            image_idx += 1;
+                        in_drawing = true;
+                        drawing_embed_id = None;
+                    }
+                    // a:blip contains r:embed="rId5" pointing to the actual image
+                    "blip" if in_drawing => {
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "embed" {
+                                drawing_embed_id = Some(
+                                    String::from_utf8_lossy(&attr.value).to_string()
+                                );
+                            }
                         }
                     }
                     "br" => {
@@ -344,29 +368,68 @@ fn parse_document_xml(xml: &str, images: &[(String, Vec<u8>)]) -> String {
                     }
                     "tcPr" => {
                         in_cell_props = false;
-                        // Now emit the <td> tag with attributes
+                        // Now emit the <td>/<th> tag with attributes
                         if cell_vmerge_continue {
                             // This cell is a continuation of a vertical merge; skip it
                         } else {
+                            let cell_tag = if first_table_row { "th" } else { "td" };
                             let mut attrs = String::new();
                             if cell_colspan > 1 {
                                 attrs.push_str(&format!(" colspan=\"{}\"", cell_colspan));
                             }
-                            html.push_str(&format!("<td{}>", attrs));
+                            html.push_str(&format!("<{}{}>", cell_tag, attrs));
                         }
+                    }
+                    "drawing" | "pict" => {
+                        // Resolve image: prefer relationship ID, fallback to index
+                        let img_name = drawing_embed_id
+                            .as_ref()
+                            .and_then(|rid| rel_to_image.get(rid))
+                            .cloned()
+                            .or_else(|| {
+                                if image_idx < images.len() {
+                                    let name = images[image_idx].0.clone();
+                                    image_idx += 1;
+                                    Some(name)
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(name) = img_name {
+                            text_buf.push_str(&format!(
+                                "<img src=\"images/{}\" alt=\"{}\">",
+                                html_escape::encode_text(&name),
+                                html_escape::encode_text(&name)
+                            ));
+                        }
+                        in_drawing = false;
+                        drawing_embed_id = None;
                     }
                     "tbl" => {
                         in_table = false;
+                        // Close tbody if we already transitioned past header
+                        if !first_table_row {
+                            html.push_str("</tbody>\n");
+                        } else {
+                            // Table had no rows or only header; close thead
+                            html.push_str("</thead>\n");
+                        }
                         html.push_str("</table>\n");
                     }
-                    "tr" => {
+                    "tr" if in_table => {
+                        _in_table_row = false;
                         html.push_str("</tr>\n");
+                        if first_table_row {
+                            first_table_row = false;
+                            html.push_str("</thead>\n<tbody>\n");
+                        }
                     }
                     "tc" => {
                         in_table_cell = false;
                         in_cell_props = false;
                         if !cell_vmerge_continue {
-                            html.push_str("</td>");
+                            let cell_tag = if first_table_row { "th" } else { "td" };
+                            html.push_str(&format!("</{}>", cell_tag));
                         }
                     }
                     _ => {}
@@ -418,6 +481,47 @@ fn extract_xml_text(xml: &str, tag: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse word/_rels/document.xml.rels to get rId → media filename mapping
+fn parse_relationships(xml: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let qname = e.name();
+                let local = local_name(qname.as_ref());
+                if local == "Relationship" {
+                    let mut rid: Option<String> = None;
+                    let mut target: Option<String> = None;
+                    for attr in e.attributes().flatten() {
+                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                        match key {
+                            "Id" => rid = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                            "Target" => target = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                            _ => {}
+                        }
+                    }
+                    if let (Some(id), Some(tgt)) = (rid, target) {
+                        if tgt.starts_with("media/") {
+                            let filename = tgt.rsplit('/').next().unwrap_or(&tgt).to_string();
+                            map.insert(id, filename);
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    map
 }
 
 fn local_name(name: &[u8]) -> &str {
