@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct ConvertRequest {
     pub input_path: String,
     pub output_dir: Option<String>,
-    pub formats: Option<Vec<String>>,
+    #[serde(alias = "formats")]
+    pub output_formats: Option<Vec<String>>,
     #[serde(default)]
     pub translate: bool,
     #[serde(default)]
@@ -43,10 +44,31 @@ fn backend_url() -> String {
 
 #[tauri::command]
 pub async fn convert_pdf(request: ConvertRequest) -> Result<serde_json::Value, String> {
+    // Build the JSON payload with field names matching the Python backend
+    let input_path = &request.input_path;
+    let output_dir = request.output_dir.clone().unwrap_or_else(|| {
+        std::path::Path::new(input_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_string_lossy()
+            .to_string()
+    });
+    let output_formats = request.output_formats.clone()
+        .unwrap_or_else(|| vec!["html".to_string(), "markdown".to_string()]);
+
+    let payload = serde_json::json!({
+        "input_path": input_path,
+        "output_dir": output_dir,
+        "output_formats": output_formats,
+        "translate": request.translate,
+        "source_language": request.source_language,
+        "target_language": request.target_language,
+    });
+
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/api/convert", backend_url()))
-        .json(&request)
+        .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Backend request failed: {}", e))?;
@@ -58,10 +80,23 @@ pub async fn convert_pdf(request: ConvertRequest) -> Result<serde_json::Value, S
 
 #[tauri::command]
 pub async fn convert_batch(request: BatchRequest) -> Result<serde_json::Value, String> {
+    let output_dir = request.output_dir.clone().unwrap_or_else(|| {
+        request.folder_path.clone()
+    });
+    let output_formats = request.formats.clone()
+        .unwrap_or_else(|| vec!["html".to_string(), "markdown".to_string()]);
+
+    let payload = serde_json::json!({
+        "folder_path": request.folder_path,
+        "output_dir": output_dir,
+        "output_formats": output_formats,
+        "recursive": request.recursive.unwrap_or(false),
+    });
+
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/api/convert/batch", backend_url()))
-        .json(&request)
+        .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Backend request failed: {}", e))?;
@@ -94,7 +129,7 @@ pub async fn convert_document(
     match ext.as_str() {
         // Rust-native converters
         "docx" | "hwpx" | "xlsx" | "pptx" => {
-            let output_formats = formats.unwrap_or_else(|| vec!["html".to_string()]);
+            let output_formats = formats.unwrap_or_else(|| vec!["html".to_string(), "markdown".to_string()]);
             let out_dir = output_dir.unwrap_or_else(|| {
                 std::path::Path::new(&input_path)
                     .parent()
@@ -150,7 +185,7 @@ pub async fn convert_document(
             convert_pdf(ConvertRequest {
                 input_path,
                 output_dir,
-                formats,
+                output_formats: formats,
                 translate: do_translate,
                 source_language: src_lang,
                 target_language: tgt_lang,

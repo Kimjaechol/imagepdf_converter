@@ -143,6 +143,7 @@ fn parse_document_xml(
     let mut in_run_props = false;
     let mut in_para_props = false;
     let mut in_cell_props = false;
+    let mut cell_tag_emitted = false;
     let mut in_drawing = false;
     let mut drawing_embed_id: Option<String> = None;
 
@@ -247,6 +248,7 @@ fn parse_document_xml(
                         cell_colspan = 1;
                         _cell_vmerge_restart = false;
                         cell_vmerge_continue = false;
+                        cell_tag_emitted = false;
                     }
                     "tcPr" if in_table_cell => {
                         in_cell_props = true;
@@ -336,6 +338,12 @@ fn parse_document_xml(
                         let has_content = !text_buf.trim().is_empty();
                         if has_content || in_table_cell {
                             if in_table_cell {
+                                // Emit cell tag if tcPr was absent
+                                if !cell_tag_emitted && !cell_vmerge_continue {
+                                    let cell_tag = if first_table_row { "th" } else { "td" };
+                                    html.push_str(&format!("<{}>", cell_tag));
+                                    cell_tag_emitted = true;
+                                }
                                 html.push_str(&text_buf);
                             } else if let Some(level) = heading_level {
                                 let align_attr = align_style_attr(para_alignment.as_deref());
@@ -378,6 +386,7 @@ fn parse_document_xml(
                                 attrs.push_str(&format!(" colspan=\"{}\"", cell_colspan));
                             }
                             html.push_str(&format!("<{}{}>", cell_tag, attrs));
+                            cell_tag_emitted = true;
                         }
                     }
                     "drawing" | "pict" => {
@@ -427,7 +436,7 @@ fn parse_document_xml(
                     "tc" => {
                         in_table_cell = false;
                         in_cell_props = false;
-                        if !cell_vmerge_continue {
+                        if cell_tag_emitted {
                             let cell_tag = if first_table_row { "th" } else { "td" };
                             html.push_str(&format!("</{}>", cell_tag));
                         }

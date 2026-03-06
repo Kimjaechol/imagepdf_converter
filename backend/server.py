@@ -494,12 +494,22 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
 
         result = pipeline.process(job)
 
+        # Collect output files
+        output_files = []
+        output_dir = Path(req.output_dir)
+        filename = Path(req.input_path).stem
+        if result.html:
+            output_files.append(str(output_dir / f"{filename}.html"))
+        if result.markdown:
+            output_files.append(str(output_dir / f"{filename}.md"))
+
         _jobs[job_id]["status"] = "completed"
         _jobs[job_id]["progress"] = 1.0
         _jobs[job_id]["message"] = "Conversion complete"
         _jobs[job_id]["result"] = {
             "total_pages": result.total_pages,
             "output_dir": req.output_dir,
+            "output_files": output_files,
             "elapsed_seconds": result.metadata.get("elapsed_seconds", 0),
         }
 
