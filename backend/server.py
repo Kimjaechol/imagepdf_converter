@@ -263,10 +263,34 @@ async def add_dictionary_term(req: CustomTermRequest):
 # API Key Management (Operator)
 # ---------------------------------------------------------------------------
 
+def _api_key_file() -> Path:
+    """Return the path to the persisted API key file."""
+    p = Path("data")
+    p.mkdir(parents=True, exist_ok=True)
+    return p / "api_key.txt"
+
+
+def _load_persisted_api_key() -> None:
+    """Load the API key from disk into os.environ on startup."""
+    f = _api_key_file()
+    if f.exists():
+        key = f.read_text(encoding="utf-8").strip()
+        if key:
+            os.environ["GEMINI_API_KEY"] = key
+            logger.info("Loaded persisted Gemini API key (%s...)", key[:4])
+
+
+# Load on module import so the key is available immediately
+_load_persisted_api_key()
+
+
 @app.post("/api/settings/api-key")
 async def set_api_key(req: SetApiKeyRequest):
-    """Set the Gemini API key (operator only)."""
+    """Set the Gemini API key (operator only). Persisted to disk."""
     os.environ["GEMINI_API_KEY"] = req.api_key
+    # Persist to file so it survives restarts
+    _api_key_file().write_text(req.api_key, encoding="utf-8")
+    logger.info("API key saved and persisted")
     return {"status": "ok", "message": "API key configured"}
 
 

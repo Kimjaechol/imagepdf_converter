@@ -488,6 +488,18 @@ function getFileIcon(ext) {
   return icons[ext] || "\u{1F4C1}";
 }
 
+// ─── Settings Status ─────────────────────────────────────
+function showSettingsStatus(message, type) {
+  const el = $("#settings-status-message");
+  if (!el) return;
+  el.textContent = message;
+  el.className = `status-message ${type}`;
+  el.style.display = "block";
+  if (type === "success" || type === "info") {
+    setTimeout(() => { el.style.display = "none"; }, 5000);
+  }
+}
+
 // ─── API Key Management ─────────────────────────────────
 async function loadApiKeyStatus() {
   try {
@@ -510,10 +522,10 @@ async function handleSaveApiKey() {
   try {
     await api.setApiKey(input.value.trim());
     input.value = "";
-    showStatus("API 키 저장 완료", "success");
+    showSettingsStatus("API 키 저장 완료", "success");
     loadApiKeyStatus();
   } catch (e) {
-    showStatus(`API 키 저장 실패: ${e}`, "error");
+    showSettingsStatus(`API 키 저장 실패: ${e}`, "error");
   }
 }
 
@@ -536,15 +548,15 @@ async function handlePurchaseCredit() {
   const userId = $("#credit-user-id")?.value || "default";
   const amount = parseFloat($("#credit-amount")?.value || "0");
   if (amount <= 0) {
-    showStatus("충전 금액을 입력해주세요", "warning");
+    showSettingsStatus("충전 금액을 입력해주세요", "warning");
     return;
   }
   try {
     const result = await api.purchaseCredits(userId, amount);
-    showStatus(`$${amount.toFixed(2)} 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)}`, "success");
+    showSettingsStatus(`$${amount.toFixed(2)} 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)}`, "success");
     loadCreditBalance();
   } catch (e) {
-    showStatus(`충전 실패: ${e}`, "error");
+    showSettingsStatus(`충전 실패: ${e}`, "error");
   }
 }
 
@@ -562,6 +574,6 @@ async function handleEstimateCost() {
       `;
     }
   } catch (e) {
-    showStatus(`추산 실패: ${e}`, "error");
+    showSettingsStatus(`추산 실패: ${e}`, "error");
   }
 }
