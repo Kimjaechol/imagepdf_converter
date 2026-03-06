@@ -21,6 +21,7 @@ from backend.models.schema import (
     PdfChunk,
     PdfJob,
 )
+from .block_integrity import assign_content_ids_and_seq
 from .correction import CorrectionEngine
 from .heading_classifier import HeadingClassifier
 from .html_renderer import HtmlRenderer
@@ -199,14 +200,32 @@ class Pipeline:
 
         if self.cfg.pipeline_mode == "unified_vision":
             # ── Adaptive processing: prescan first, then smart batching ──
-            all_pages, total_pages = self._process_unified_adaptive(
-                job, images_dir, output_images_dir,
+            all_pages, total_pages, page_data_by_idx = (
+                self._process_unified_adaptive(
+                    job, images_dir, output_images_dir,
+                )
             )
 
             # Dictionary-based correction as safety net
             self.progress_callback("Applying dictionary corrections", 0.82)
             all_blocks = [b for p in all_pages for b in p.blocks]
             all_blocks = self.correction.correct_dictionary_only(all_blocks)
+
+            # Block integrity: validate reading order, assign sequential
+            # numbers to tables/figures, link captions, assign stable IDs.
+            # MUST run BEFORE image extraction so filenames include seq numbers.
+            self.progress_callback("Verifying block integrity", 0.85)
+            all_pages = assign_content_ids_and_seq(all_pages)
+
+            # Now extract images with correct sequential numbers in filenames
+            self.progress_callback("Extracting images", 0.88)
+            image_extractor = ImageExtractor(output_dir=output_images_dir)
+            for page in all_pages:
+                pd = page_data_by_idx.get(page.page_index)
+                if pd:
+                    page.blocks = image_extractor.extract_images(
+                        pd["image_path"], page.blocks, page.page_index,
+                    )
         else:
             # ── Standard mode: fixed chunking + multi-step pipeline ──
             self.progress_callback("Splitting PDF", 0.05)
@@ -290,7 +309,7 @@ class Pipeline:
         job: PdfJob,
         images_dir: Path,
         output_images_dir: Path,
-    ) -> tuple[list[PageResult], int]:
+    ) -> tuple[list[PageResult], int, dict[int, dict]]:
         """Adaptive processing: prescan ALL pages first, then smart-batch.
 
         Instead of blindly splitting the PDF into fixed 10-page chunks,
@@ -303,7 +322,7 @@ class Pipeline:
              sub-batches when a consecutive run exceeds 10 pages.
           5. Process TAG=0 and TAG=1 groups in parallel via thread pool.
 
-        Returns (all_pages, total_page_count).
+        Returns (all_pages, total_page_count, page_data_by_index).
         """
         from .unified_vision import (
             TranslationContext,
@@ -501,15 +520,10 @@ class Pipeline:
                     blocks=fallback_blocks,
                 )
 
-        # 7. Extract images (figures, equations) locally
-        self.progress_callback("Extracting images", 0.72)
-        image_extractor = ImageExtractor(output_dir=output_images_dir)
-        for pr in result_index_map.values():
-            pd = page_data_by_idx.get(pr.page_index)
-            if pd:
-                pr.blocks = image_extractor.extract_images(
-                    pd["image_path"], pr.blocks, pr.page_index,
-                )
+        # NOTE: Image extraction (cropping figures/equations from pages) is
+        # deferred to process() AFTER assign_content_ids_and_seq(), so that
+        # image filenames include correct sequential numbers (Table 1, Figure 2).
+        # Store page_data mapping for later use.
 
         # ── SAFETY LAYER 3: Final integrity check ──
         # Build results sorted by page_index (guaranteed document order)
@@ -539,7 +553,7 @@ class Pipeline:
             len(all_results_verified), len(expected_indices), len(missing_indices),
         )
 
-        return all_results_verified, total_pages
+        return all_results_verified, total_pages, page_data_by_idx
 
     # ------------------------------------------------------------------
     # Parallel chunk processing (used by standard mode)

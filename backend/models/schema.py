@@ -162,6 +162,11 @@ class LayoutBlock:
     column_index: int = 0
     # Children blocks (for nested structures)
     children: list["LayoutBlock"] = field(default_factory=list)
+    # ── Content anchoring & sequential numbering ──
+    # Document-wide sequential number for tables/figures (1-based)
+    content_seq: int = 0          # e.g. table_seq=3 → "표 3" / "Table 3"
+    # ID of the parent block this caption belongs to
+    parent_block_id: str = ""     # for CAPTION → links to TABLE/FIGURE id
 
 
 # ---------------------------------------------------------------------------

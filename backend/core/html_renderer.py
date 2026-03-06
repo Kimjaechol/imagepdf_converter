@@ -110,6 +110,30 @@ class HtmlRenderer:
                 return self._render_paragraph(block)
             return ""
 
+    def _block_data_attrs(self, block: LayoutBlock) -> str:
+        """Build HTML data-* attributes for traceability.
+
+        These attributes make it possible to:
+          - Trace every HTML element back to its source page and position
+          - Verify that tables/figures are in the correct location
+          - Debug ordering issues by inspecting the rendered HTML
+        """
+        attrs = [
+            f'data-block-id="{block.id}"',
+            f'data-page="{block.page_index}"',
+            f'data-order="{block.reading_order}"',
+        ]
+        if block.bbox:
+            attrs.append(
+                f'data-bbox="{block.bbox.x0:.0f},{block.bbox.y0:.0f},'
+                f'{block.bbox.x1:.0f},{block.bbox.y1:.0f}"'
+            )
+        if block.content_seq > 0:
+            attrs.append(f'data-seq="{block.content_seq}"')
+        if block.parent_block_id:
+            attrs.append(f'data-parent="{block.parent_block_id}"')
+        return " " + " ".join(attrs)
+
     def _render_heading(self, block: LayoutBlock) -> str:
         level_map = {
             HeadingLevel.H1: "h1", HeadingLevel.H2: "h2",
@@ -118,25 +142,32 @@ class HtmlRenderer:
         }
         tag = level_map.get(block.heading_level, "h3")
         style = self._build_inline_style(block.style)
+        data = self._block_data_attrs(block)
         text = self._escape(block.text)
         text = self._add_footnote_refs(text, block)
-        return f'<{tag}{style}>{text}</{tag}>'
+        return f'<{tag}{style}{data}>{text}</{tag}>'
 
     def _render_paragraph(self, block: LayoutBlock) -> str:
         style = self._build_inline_style(block.style)
+        data = self._block_data_attrs(block)
         text = self._escape(block.text)
         # Preserve line breaks
         text = text.replace("\n", "<br>\n")
         text = self._add_footnote_refs(text, block)
-        return f"<p{style}>{text}</p>"
+        return f"<p{style}{data}>{text}</p>"
 
     def _render_table(self, block: LayoutBlock) -> str:
         if not block.table_structure:
             # Fallback: render text as preformatted
-            return f"<pre>{self._escape(block.text)}</pre>"
+            data = self._block_data_attrs(block)
+            return f"<pre{data}>{self._escape(block.text)}</pre>"
 
         ts = block.table_structure
-        parts: list[str] = ['<table border="1" cellpadding="4" cellspacing="0">']
+        data = self._block_data_attrs(block)
+        seq_comment = ""
+        if block.content_seq > 0:
+            seq_comment = f"<!-- Table {block.content_seq} -->\n"
+        parts: list[str] = [f'{seq_comment}<table border="1" cellpadding="4" cellspacing="0"{data}>']
 
         # Build grid
         grid: dict[tuple[int, int], TableCell] = {}
@@ -197,12 +228,19 @@ class HtmlRenderer:
         return "\n".join(parts)
 
     def _render_figure(self, block: LayoutBlock) -> str:
-        parts = ["<figure>"]
+        data = self._block_data_attrs(block)
+        seq_label = ""
+        if block.content_seq > 0:
+            seq_label = f"Figure {block.content_seq}"
+        parts = [f"<figure{data}>"]
         if block.image_path:
             rel_path = os.path.relpath(block.image_path, start=".")
-            parts.append(f'  <img src="{rel_path}" alt="{self._escape(block.caption or block.block_type.value)}">')
+            alt = self._escape(block.caption or seq_label or block.block_type.value)
+            parts.append(f'  <img src="{rel_path}" alt="{alt}">')
         if block.caption:
             parts.append(f"  <figcaption>{self._escape(block.caption)}</figcaption>")
+        elif seq_label:
+            parts.append(f"  <figcaption>{seq_label}</figcaption>")
         parts.append("</figure>")
         return "\n".join(parts)
 
@@ -221,7 +259,8 @@ class HtmlRenderer:
         return f"<{tag}>\n" + "\n".join(items) + f"\n</{tag}>"
 
     def _render_caption(self, block: LayoutBlock) -> str:
-        return f'<p class="caption">{self._escape(block.text)}</p>'
+        data = self._block_data_attrs(block)
+        return f'<p class="caption"{data}>{self._escape(block.text)}</p>'
 
     def _render_box(self, block: LayoutBlock) -> str:
         style = ' style="border: 1px solid #ccc; padding: 8px; margin: 8px 0;"'
