@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -196,40 +197,38 @@ class Pipeline:
         images_dir = work_dir / "images"
         output_images_dir = job.output_dir / "images"
 
-        # 1. Split PDF into chunks
-        self.progress_callback("Splitting PDF", 0.05)
-        chunks = self.splitter.split(job.input_path, work_dir / "chunks")
-        total_pages = self.splitter.get_page_count(job.input_path)
+        if self.cfg.pipeline_mode == "unified_vision":
+            # ── Adaptive processing: prescan first, then smart batching ──
+            all_pages, total_pages = self._process_unified_adaptive(
+                job, images_dir, output_images_dir,
+            )
 
-        # 2. Process chunks in parallel (translation options passed through)
-        self.progress_callback("Processing chunks in parallel", 0.10)
-        chunk_results = self._process_chunks_parallel(
-            chunks, images_dir, output_images_dir, job=job,
-        )
+            # Dictionary-based correction as safety net
+            self.progress_callback("Applying dictionary corrections", 0.82)
+            all_blocks = [b for p in all_pages for b in p.blocks]
+            all_blocks = self.correction.correct_dictionary_only(all_blocks)
+        else:
+            # ── Standard mode: fixed chunking + multi-step pipeline ──
+            self.progress_callback("Splitting PDF", 0.05)
+            chunks = self.splitter.split(job.input_path, work_dir / "chunks")
+            total_pages = self.splitter.get_page_count(job.input_path)
 
-        # 3. Merge chunks
-        self.progress_callback("Merging results", 0.75)
-        all_pages = self.merger.merge(chunk_results)
+            self.progress_callback("Processing chunks in parallel", 0.10)
+            chunk_results = self._process_chunks_parallel(
+                chunks, images_dir, output_images_dir, job=job,
+            )
 
-        if self.cfg.pipeline_mode != "unified_vision":
-            # Standard mode: separate heading classification and correction
-            # 4. Document-level heading classification
+            self.progress_callback("Merging results", 0.75)
+            all_pages = self.merger.merge(chunk_results)
+
             self.progress_callback("Classifying headings", 0.80)
             all_blocks = [b for p in all_pages for b in p.blocks]
             all_blocks = self.heading_clf.classify(all_blocks)
 
-            # 5. Language correction (after structure is finalized)
             self.progress_callback("Correcting text", 0.85)
             all_blocks = self.correction.correct(all_blocks)
-        else:
-            # Unified vision mode: heading + correction already done in the
-            # single Gemini call.  Only apply dictionary-based Hanja correction
-            # as a safety net.
-            self.progress_callback("Applying dictionary corrections", 0.82)
-            all_blocks = [b for p in all_pages for b in p.blocks]
-            all_blocks = self.correction.correct_dictionary_only(all_blocks)
 
-        # 6. Render outputs
+        # Render outputs
         self.progress_callback("Rendering output", 0.90)
         result = DocumentResult(
             source_path=str(job.input_path),
@@ -242,7 +241,7 @@ class Pipeline:
         if "markdown" in job.output_formats:
             result.markdown = self.md_renderer.render(all_pages)
 
-        # 7. Save output files
+        # Save output files
         self.progress_callback("Saving files", 0.95)
         self._save_outputs(result, job)
 
@@ -283,7 +282,178 @@ class Pipeline:
         return results
 
     # ------------------------------------------------------------------
-    # Parallel chunk processing
+    # Adaptive unified processing (prescan-first, no fixed chunking)
+    # ------------------------------------------------------------------
+
+    def _process_unified_adaptive(
+        self,
+        job: PdfJob,
+        images_dir: Path,
+        output_images_dir: Path,
+    ) -> tuple[list[PageResult], int]:
+        """Adaptive processing: prescan ALL pages first, then smart-batch.
+
+        Instead of blindly splitting the PDF into fixed 10-page chunks,
+        this method:
+          1. Renders ALL pages and runs a fast local prescan (~0.1ms/page)
+          2. Classifies every page as TAG=0 (text-only) or TAG=1 (complex)
+          3. TAG=0 pages: run local OCR → send only TEXT to Gemini in
+             large batches (up to 30 pages).  No images sent.
+          4. TAG=1 pages: group consecutive runs; only split into ≤10-page
+             sub-batches when a consecutive run exceeds 10 pages.
+          5. Process TAG=0 and TAG=1 groups in parallel via thread pool.
+
+        Returns (all_pages, total_page_count).
+        """
+        from .unified_vision import (
+            TranslationContext,
+            _BATCH_COMPLEX,
+            _BATCH_TEXT_ONLY,
+        )
+
+        # 1. Render ALL pages from the original PDF
+        self.progress_callback("Rendering all pages", 0.05)
+        total_pages = self.splitter.get_page_count(job.input_path)
+        all_page_data = self.renderer.render_pdf(job.input_path, images_dir)
+        logger.info("Rendered %d pages from %s", len(all_page_data), job.input_path)
+
+        # 2. Fast prescan: classify every page as TAG=0 or TAG=1
+        self.progress_callback("Pre-scanning page complexity", 0.10)
+        classifications = self.unified_vision.prescan_pages(all_page_data)
+
+        tag0_pages = []
+        tag1_pages = []
+        for pd in all_page_data:
+            cls = classifications.get(pd["page_index"])
+            if cls and cls.is_complex:
+                tag1_pages.append(pd)
+            else:
+                tag0_pages.append(pd)
+
+        logger.info(
+            "Adaptive prescan: %d TAG=0 (text-only), %d TAG=1 (complex) out of %d pages",
+            len(tag0_pages), len(tag1_pages), len(all_page_data),
+        )
+
+        # 3. Gather digital text + run local OCR on TAG=0 pages without it
+        self.progress_callback("Running local OCR on text-only pages", 0.15)
+        ocr_blocks: dict[int, list[LayoutBlock]] = {}
+        for pd in all_page_data:
+            digital_blocks = pd.get("digital_blocks", [])
+            if digital_blocks:
+                ocr_blocks[pd["page_index"]] = digital_blocks
+
+        for pd in tag0_pages:
+            page_idx = pd["page_index"]
+            if page_idx not in ocr_blocks:
+                local_blocks = self.ocr.ocr_full_page(pd["image_path"], page_idx)
+                if local_blocks:
+                    ocr_blocks[page_idx] = local_blocks
+                    logger.debug(
+                        "Local OCR for TAG=0 page %d: %d blocks",
+                        page_idx, len(local_blocks),
+                    )
+
+        # 4. Build smart batches
+        # TAG=0: large batches (text-only, up to _BATCH_TEXT_ONLY per batch)
+        # TAG=1: group consecutive pages, split only if >_BATCH_COMPLEX
+        tag0_batches = []
+        for i in range(0, len(tag0_pages), _BATCH_TEXT_ONLY):
+            tag0_batches.append(("tag0", tag0_pages[i : i + _BATCH_TEXT_ONLY]))
+
+        # Group consecutive TAG=1 pages, then split runs > _BATCH_COMPLEX
+        tag1_batches = []
+        if tag1_pages:
+            consecutive_run: list[dict] = [tag1_pages[0]]
+            for j in range(1, len(tag1_pages)):
+                prev_idx = tag1_pages[j - 1]["page_index"]
+                curr_idx = tag1_pages[j]["page_index"]
+                if curr_idx == prev_idx + 1:
+                    consecutive_run.append(tag1_pages[j])
+                else:
+                    # End of a consecutive run → split if needed
+                    for k in range(0, len(consecutive_run), _BATCH_COMPLEX):
+                        tag1_batches.append(("tag1", consecutive_run[k : k + _BATCH_COMPLEX]))
+                    consecutive_run = [tag1_pages[j]]
+            # Don't forget the last run
+            for k in range(0, len(consecutive_run), _BATCH_COMPLEX):
+                tag1_batches.append(("tag1", consecutive_run[k : k + _BATCH_COMPLEX]))
+
+        all_batches = tag0_batches + tag1_batches
+        logger.info(
+            "Smart batching: %d TAG=0 batches, %d TAG=1 batches",
+            len(tag0_batches), len(tag1_batches),
+        )
+
+        # 5. Translation context
+        translation_ctx = None
+        if job.translate:
+            translation_ctx = TranslationContext(
+                enabled=True,
+                source_language=job.source_language,
+                target_language=job.target_language,
+            )
+
+        # 6. Process all batches in parallel via thread pool
+        self.progress_callback("Processing batches in parallel", 0.20)
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+
+        all_results: list[PageResult] = []
+        completed = 0
+
+        with ThreadPoolExecutor(max_workers=self.cfg.max_workers) as executor:
+            futures = {}
+            for batch_tag, batch_pages in all_batches:
+                if batch_tag == "tag0":
+                    future = executor.submit(
+                        self.unified_vision._process_text_only_batch,
+                        batch_pages, ocr_blocks, api_key, classifications,
+                        translation_ctx,
+                    )
+                else:
+                    future = executor.submit(
+                        self.unified_vision._process_complex_batch,
+                        batch_pages, ocr_blocks, api_key, classifications,
+                        translation_ctx,
+                    )
+                futures[future] = (batch_tag, batch_pages)
+
+            for future in as_completed(futures):
+                batch_tag, batch_pages = futures[future]
+                try:
+                    batch_results = future.result()
+                    all_results.extend(batch_results)
+                except Exception as exc:
+                    page_ids = [p["page_index"] for p in batch_pages]
+                    logger.error(
+                        "%s batch (pages %s) failed: %s",
+                        batch_tag.upper(), page_ids, exc,
+                    )
+                completed += 1
+                pct = 0.20 + 0.50 * (completed / max(len(all_batches), 1))
+                self.progress_callback(
+                    f"Batch {completed}/{len(all_batches)} done ({batch_tag})",
+                    pct,
+                )
+
+        # 7. Extract images (figures, equations) locally
+        self.progress_callback("Extracting images", 0.72)
+        image_extractor = ImageExtractor(output_dir=output_images_dir)
+        page_data_by_idx = {pd["page_index"]: pd for pd in all_page_data}
+        for pr in all_results:
+            pd = page_data_by_idx.get(pr.page_index)
+            if pd:
+                pr.blocks = image_extractor.extract_images(
+                    pd["image_path"], pr.blocks, pr.page_index,
+                )
+
+        # Sort by page index to restore document order
+        all_results.sort(key=lambda pr: pr.page_index)
+
+        return all_results, total_pages
+
+    # ------------------------------------------------------------------
+    # Parallel chunk processing (used by standard mode)
     # ------------------------------------------------------------------
 
     def _process_chunks_parallel(
