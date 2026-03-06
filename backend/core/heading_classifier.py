@@ -27,7 +27,7 @@ class HeadingClassifier:
         llm_provider: str = "gemini",
         ollama_model: str = "qwen2.5:0.5b-instruct",
         ollama_base_url: str = "http://localhost:11434",
-        gemini_model: str = "gemini-3.1-flash-lite",
+        gemini_model: str = "gemini-3.1-flash-lite-preview",
     ):
         self.mode = mode
         self.llm_provider = llm_provider
