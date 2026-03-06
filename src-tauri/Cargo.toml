@@ -26,6 +26,7 @@ tracing-subscriber = "0.3"
 portpicker = "0.1"
 regex = "1"
 html-escape = "0.2"
+dirs-next = "2"
 
 [features]
 default = ["custom-protocol"]

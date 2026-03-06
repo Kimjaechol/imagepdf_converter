@@ -41,6 +41,10 @@
       "../build_output/portable_python/**/*"
     ],
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
       "nsis": {
         "languages": ["Korean", "English"],
         "displayLanguageSelector": false
