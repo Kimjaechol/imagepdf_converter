@@ -8,7 +8,30 @@ mod moa;
 use tauri::{Emitter, Manager};
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    // Set up file logging so we can diagnose launch failures
+    let log_dir = dirs_next::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("MoA-DocConverter")
+        .join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_file = log_dir.join("app.log");
+
+    let file_appender = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file);
+
+    if let Ok(writer) = file_appender {
+        tracing_subscriber::fmt()
+            .with_writer(std::sync::Mutex::new(writer))
+            .with_ansi(false)
+            .init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
+
+    tracing::info!("=== App starting ===");
+    tracing::info!("Log file: {:?}", log_file);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -85,5 +108,9 @@ fn main() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            tracing::error!("Tauri application failed to start: {}", e);
+            eprintln!("error while running tauri application: {}", e);
+        });
+    tracing::info!("=== App exiting ===");
 }
