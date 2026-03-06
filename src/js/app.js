@@ -288,11 +288,12 @@ async function handleConvert() {
 async function convertSingle() {
   const ext = api.getFileExtension(state.selectedFile);
 
-  // Unified conversion - routes automatically based on file extension
-  if (api.isRustNativeFormat(ext)) {
-    // Rust-native conversion (instant, no job queue)
-    const label = state.translate ? `${ext.toUpperCase()} 변환 + 번역 중...` : `${ext.toUpperCase()} 변환 중...`;
-    updateProgress(30, label);
+  // Unified conversion - routes via convert_document command which
+  // handles backend availability check and Rust-native fallback for PDF
+  const label = state.translate ? `${ext.toUpperCase()} 변환 + 번역 중...` : `${ext.toUpperCase()} 변환 중...`;
+  updateProgress(30, label);
+
+  try {
     const result = await api.convertDocument(
       state.selectedFile,
       state.outputDir,
@@ -301,40 +302,38 @@ async function convertSingle() {
       state.sourceLanguage,
       state.targetLanguage
     );
-    updateProgress(100, "변환 완료!");
-    showResults(result);
-    showStatus("변환 완료!", "success");
-  } else {
-    // PDF → Python backend (async with progress via WebSocket)
-    const resp = await api.convertPdf(
-      state.selectedFile,
-      state.outputDir,
-      state.formats,
-      state.translate,
-      state.sourceLanguage,
-      state.targetLanguage
-    );
-    const jobId = resp.job_id;
-    state.currentJobId = jobId;
 
-    const ws = await api.connectProgress(jobId, (data) => {
-      if (data.progress !== undefined) {
-        updateProgress(data.progress * 100, data.message || "처리 중...");
-      }
-      if (data.status === "completed") {
-        updateProgress(100, "변환 완료!");
-        showStatus("변환 완료!", "success");
-        pollJobResult(jobId);
-      }
-      if (data.status === "failed") {
-        showStatus(`변환 실패: ${data.message}`, "error");
-      }
-    });
-    state.ws = ws;
+    // If backend returned a job_id, track progress via WebSocket
+    if (result.job_id) {
+      const jobId = result.job_id;
+      state.currentJobId = jobId;
 
-    if (!ws) {
-      pollJobProgress(jobId);
+      const ws = await api.connectProgress(jobId, (data) => {
+        if (data.progress !== undefined) {
+          updateProgress(data.progress * 100, data.message || "처리 중...");
+        }
+        if (data.status === "completed") {
+          updateProgress(100, "변환 완료!");
+          showStatus("변환 완료!", "success");
+          pollJobResult(jobId);
+        }
+        if (data.status === "failed") {
+          showStatus(`변환 실패: ${data.message}`, "error");
+        }
+      });
+      state.ws = ws;
+
+      if (!ws) {
+        pollJobProgress(jobId);
+      }
+    } else {
+      // Rust-native result (instant)
+      updateProgress(100, "변환 완료!");
+      showResults(result);
+      showStatus("변환 완료!", "success");
     }
+  } catch (e) {
+    showStatus(`변환 실패: ${e}`, "error");
   }
 }
 
