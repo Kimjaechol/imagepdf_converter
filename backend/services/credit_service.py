@@ -154,13 +154,26 @@ class CreditService:
             self._persist()
             return record
 
-    def estimate_cost(self, num_pages: int) -> dict:
-        """Estimate the user-facing cost for converting *num_pages* pages."""
+    def estimate_cost(self, num_pages: int, translate: bool = False) -> dict:
+        """Estimate the user-facing cost for converting *num_pages* pages.
+
+        When translate=True, output tokens increase because the AI must
+        produce translated text. Input tokens are roughly the same since
+        translation instructions are embedded in the existing prompt
+        (minimal overhead). The main cost increase is ~1.3x output tokens.
+        """
         # TAG=0 (text-only, ~70%): local OCR → text-only Gemini (~200 input, ~600 output)
         # TAG=1 (complex, ~30%): image → Gemini vision (~1,650 input, ~1,500 output)
         # Blended average per page: ~635 input, ~870 output
         estimated_input = num_pages * 635
         estimated_output = num_pages * 870
+
+        if translate:
+            # Translation adds ~30% more output tokens (translated text is
+            # roughly same length, but prompt overhead adds some input tokens)
+            estimated_input = int(estimated_input * 1.05)   # +5% input (prompt)
+            estimated_output = int(estimated_output * 1.3)  # +30% output (translated text)
+
         raw_cost = (
             estimated_input / 1_000_000 * self.input_cost
             + estimated_output / 1_000_000 * self.output_cost
@@ -168,6 +181,7 @@ class CreditService:
         charged = raw_cost * self.cost_markup
         return {
             "num_pages": num_pages,
+            "translate": translate,
             "estimated_input_tokens": estimated_input,
             "estimated_output_tokens": estimated_output,
             "raw_cost_usd": round(raw_cost, 6),

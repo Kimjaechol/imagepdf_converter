@@ -44,6 +44,39 @@ _BATCH_COMPLEX = 10     # complex pages need more output per page
 
 
 @dataclass
+class TranslationContext:
+    """Translation settings passed through the pipeline."""
+    enabled: bool = False
+    source_language: str = ""      # empty = auto-detect
+    target_language: str = "ko"
+
+    @property
+    def instruction(self) -> str:
+        """Build the translation instruction for the AI prompt."""
+        if not self.enabled:
+            return ""
+        src = self.source_language or "the source language (auto-detect)"
+        lang_names = {
+            "ko": "Korean", "en": "English", "ja": "Japanese",
+            "zh": "Chinese", "de": "German", "fr": "French",
+            "es": "Spanish", "vi": "Vietnamese", "th": "Thai",
+            "ru": "Russian", "pt": "Portuguese", "it": "Italian",
+            "ar": "Arabic", "id": "Indonesian",
+        }
+        src_name = lang_names.get(self.source_language, src)
+        tgt_name = lang_names.get(self.target_language, self.target_language)
+        return (
+            f"\n\n**TRANSLATION**: Translate ALL text from {src_name} to {tgt_name}. "
+            f"The 'text' field in your JSON output must contain the TRANSLATED text in {tgt_name}. "
+            f"Preserve the original meaning accurately. "
+            f"For proper nouns, technical terms, and abbreviations, keep the original in parentheses "
+            f"after the translation, e.g. '대한민국(大韓民國)' or '인공지능(AI)'. "
+            f"Table cell text must also be translated. "
+            f"Do NOT include the original text separately – only the translated version."
+        )
+
+
+@dataclass
 class PageClassification:
     """Result of the fast local pre-scan for a single page."""
     page_index: int
@@ -82,12 +115,21 @@ class UnifiedVisionProcessor:
         self,
         page_data_list: list[dict],
         ocr_blocks_per_page: dict[int, list[LayoutBlock]] | None = None,
+        translate: bool = False,
+        source_language: str = "",
+        target_language: str = "ko",
     ) -> list[PageResult]:
         """Process multiple pages via unified Gemini Vision call(s).
 
         1. Fast local pre-scan → classify each page as TAG=0 or TAG=1
         2. TAG=0 pages: text-only correction (no images sent to Gemini)
+           - With translation: text still sent to Gemini for translation
         3. TAG=1 pages: full vision analysis (images sent to Gemini)
+
+        When translate=True, ALL pages are sent to Gemini (TAG=0 pages
+        still send only text, not images) because translation requires AI.
+        The translation instruction is embedded in the same single prompt,
+        so conversion + translation happen in one API call with no extra cost.
         """
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
@@ -95,6 +137,20 @@ class UnifiedVisionProcessor:
             return []
 
         ocr_blocks = ocr_blocks_per_page or {}
+
+        # Build translation context if needed
+        translation_ctx = None
+        if translate:
+            translation_ctx = TranslationContext(
+                enabled=True,
+                source_language=source_language,
+                target_language=target_language,
+            )
+            logger.info(
+                "Translation enabled: %s → %s",
+                source_language or "auto-detect",
+                target_language,
+            )
 
         # Step 1: Fast local pre-scan
         classifications = self.prescan_pages(page_data_list)
@@ -117,11 +173,12 @@ class UnifiedVisionProcessor:
         results: list[PageResult] = []
 
         # Step 3a: TAG=0 pages – TEXT ONLY to Gemini (no images)
-        # Local OCR already ran; send just text for correction + heading classification
+        # With translation: Gemini still gets only text, but also translates
         for i in range(0, len(text_only_pages), _BATCH_TEXT_ONLY):
             batch = text_only_pages[i : i + _BATCH_TEXT_ONLY]
             batch_results = self._process_text_only_batch(
                 batch, ocr_blocks, api_key, classifications,
+                translation_ctx=translation_ctx,
             )
             results.extend(batch_results)
 
@@ -130,6 +187,7 @@ class UnifiedVisionProcessor:
             batch = complex_pages[i : i + _BATCH_COMPLEX]
             batch_results = self._process_complex_batch(
                 batch, ocr_blocks, api_key, classifications,
+                translation_ctx=translation_ctx,
             )
             results.extend(batch_results)
 
@@ -220,12 +278,17 @@ class UnifiedVisionProcessor:
         ocr_blocks: dict[int, list[LayoutBlock]],
         api_key: str,
         classifications: dict[int, PageClassification] | None = None,
+        translation_ctx: TranslationContext | None = None,
     ) -> list[PageResult]:
         """TAG=0: Send only OCR TEXT to Gemini (no images).
 
         Local OCR (Surya) already extracted high-quality text.
-        Gemini only needs to correct errors and classify headings.
+        Gemini corrects errors, classifies headings, and optionally translates.
         This saves ~1,500 input tokens per page (no image tokens).
+
+        When translation is enabled, translation happens in the SAME single
+        API call – no additional cost beyond the extra output tokens for
+        translated text.
         """
         if not page_data_list:
             return []
@@ -254,7 +317,9 @@ class UnifiedVisionProcessor:
                     "hints": "  [TAG=0]",
                 })
 
-            prompt = self._build_text_only_prompt(page_infos)
+            prompt = self._build_text_only_prompt(
+                page_infos, translation_ctx=translation_ctx,
+            )
 
             # Single text-only call – no images in parts
             response = model.generate_content(prompt)
@@ -271,11 +336,13 @@ class UnifiedVisionProcessor:
         ocr_blocks: dict[int, list[LayoutBlock]],
         api_key: str,
         classifications: dict[int, PageClassification] | None = None,
+        translation_ctx: TranslationContext | None = None,
     ) -> list[PageResult]:
         """TAG=1: Send page IMAGES to Gemini for full vision analysis.
 
         Complex pages need Gemini to see the actual image for table
         structure, figure detection, multi-column layout, etc.
+        When translation is enabled, translation is done in the same call.
         """
         if not page_data_list:
             return []
@@ -328,7 +395,9 @@ class UnifiedVisionProcessor:
                     "hints": hints,
                 })
 
-            prompt = self._build_complex_prompt(page_infos)
+            prompt = self._build_complex_prompt(
+                page_infos, translation_ctx=translation_ctx,
+            )
             parts.append(prompt)
 
             # Multimodal call – images + text prompt
@@ -395,7 +464,11 @@ class UnifiedVisionProcessor:
     # Prompts (type-specific)
     # ------------------------------------------------------------------
 
-    def _build_text_only_prompt(self, page_infos: list[dict]) -> str:
+    def _build_text_only_prompt(
+        self,
+        page_infos: list[dict],
+        translation_ctx: TranslationContext | None = None,
+    ) -> str:
         """Lighter prompt for text-only pages – no table schema needed."""
         pages_desc = []
         for pi in page_infos:
@@ -405,6 +478,11 @@ class UnifiedVisionProcessor:
             pages_desc.append(desc)
 
         pages_section = "\n\n".join(pages_desc)
+
+        # Translation instruction (empty string if not translating)
+        translate_instruction = ""
+        if translation_ctx and translation_ctx.enabled:
+            translate_instruction = translation_ctx.instruction
 
         return f"""You are given OCR-extracted text from text-only document pages (TAG=0).
 No images are provided. The text was extracted by a high-quality local OCR engine.
@@ -422,7 +500,7 @@ Your tasks:
 1. **Correct OCR errors**: Fix Korean Hanja (甲→갑), spelling, spacing errors.
 2. **Classify headings**: Using font size, bold, alignment metadata + text patterns.
 3. **Determine reading order**: Based on bbox positions (top-to-bottom, left-to-right).
-4. **Preserve bbox coordinates and styles**: Keep the original bbox. Reflect font_size_relative from actual sz metadata.
+4. **Preserve bbox coordinates and styles**: Keep the original bbox. Reflect font_size_relative from actual sz metadata.{translate_instruction}
 
 {pages_section}
 
@@ -448,7 +526,11 @@ Return JSON:
 
 Return ONLY valid JSON. No fences. Include ALL visible text."""
 
-    def _build_complex_prompt(self, page_infos: list[dict]) -> str:
+    def _build_complex_prompt(
+        self,
+        page_infos: list[dict],
+        translation_ctx: TranslationContext | None = None,
+    ) -> str:
         """Full prompt for complex pages with tables/figures/multi-column."""
         pages_desc = []
         for pi in page_infos:
@@ -458,6 +540,11 @@ Return ONLY valid JSON. No fences. Include ALL visible text."""
             pages_desc.append(desc)
 
         pages_section = "\n\n".join(pages_desc)
+
+        # Translation instruction (empty string if not translating)
+        translate_instruction = ""
+        if translation_ctx and translation_ctx.enabled:
+            translate_instruction = translation_ctx.instruction
 
         return f"""Analyze each page image below.
 
@@ -471,7 +558,7 @@ Tasks:
 2. **Table Recognition**: For EVERY table, extract full cell structure (row, col, rowspan, colspan, text, is_header). This is critical.
 3. **Reading Order**: Structural lines (borders, separators) define reading zones. Read each zone completely before the next. Multi-column: left first, then right. Footnotes come last.
 4. **Heading Classification**: h1-h6. Korean "제1장"/"제1절" = h2/h3. No level skipping.
-5. **Text Correction**: Fix OCR errors (Hanja 甲乙丙丁, Korean spelling/spacing).
+5. **Text Correction**: Fix OCR errors (Hanja 甲乙丙丁, Korean spelling/spacing).{translate_instruction}
 
 {pages_section}
 

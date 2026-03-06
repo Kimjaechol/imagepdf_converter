@@ -208,6 +208,10 @@ class PdfJob:
     output_dir: Path = field(default_factory=lambda: Path())
     filename: str = ""
     output_formats: list[str] = field(default_factory=lambda: ["html", "markdown"])
+    # Translation options
+    translate: bool = False
+    source_language: str = ""      # e.g. "ja", "en", "zh" (auto-detect if empty)
+    target_language: str = "ko"    # e.g. "ko", "en", "ja"
 
 
 @dataclass

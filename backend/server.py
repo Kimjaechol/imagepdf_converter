@@ -67,6 +67,10 @@ class ConvertRequest(BaseModel):
     input_path: str
     output_dir: str
     output_formats: list[str] = ["html", "markdown"]
+    # Translation options: set translate=True and specify languages
+    translate: bool = False
+    source_language: str = ""      # empty = auto-detect (e.g. "ja", "en", "zh")
+    target_language: str = "ko"    # e.g. "ko", "en", "ja"
 
 
 class BatchConvertRequest(BaseModel):
@@ -97,6 +101,7 @@ class PurchaseCreditsRequest(BaseModel):
 
 class EstimateCostRequest(BaseModel):
     num_pages: int
+    translate: bool = False
 
 
 class JobStatus(BaseModel):
@@ -114,6 +119,30 @@ class JobStatus(BaseModel):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.get("/api/languages")
+async def get_supported_languages():
+    """Return supported translation languages."""
+    return {
+        "languages": [
+            {"code": "", "name": "Auto-detect", "name_native": "자동 감지"},
+            {"code": "ko", "name": "Korean", "name_native": "한국어"},
+            {"code": "en", "name": "English", "name_native": "English"},
+            {"code": "ja", "name": "Japanese", "name_native": "日本語"},
+            {"code": "zh", "name": "Chinese", "name_native": "中文"},
+            {"code": "de", "name": "German", "name_native": "Deutsch"},
+            {"code": "fr", "name": "French", "name_native": "Français"},
+            {"code": "es", "name": "Spanish", "name_native": "Español"},
+            {"code": "vi", "name": "Vietnamese", "name_native": "Tiếng Việt"},
+            {"code": "th", "name": "Thai", "name_native": "ไทย"},
+            {"code": "ru", "name": "Russian", "name_native": "Русский"},
+            {"code": "pt", "name": "Portuguese", "name_native": "Português"},
+            {"code": "it", "name": "Italian", "name_native": "Italiano"},
+            {"code": "ar", "name": "Arabic", "name_native": "العربية"},
+            {"code": "id", "name": "Indonesian", "name_native": "Bahasa Indonesia"},
+        ],
+    }
 
 
 @app.get("/api/config")
@@ -281,7 +310,7 @@ async def purchase_credits(req: PurchaseCreditsRequest):
 async def estimate_cost(req: EstimateCostRequest):
     """Estimate the credit cost for converting N pages."""
     svc = _get_credit_service()
-    return svc.estimate_cost(req.num_pages)
+    return svc.estimate_cost(req.num_pages, translate=req.translate)
 
 
 @app.get("/api/credits/{user_id}/history")
@@ -343,6 +372,9 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
             output_dir=Path(req.output_dir),
             filename=Path(req.input_path).stem,
             output_formats=req.output_formats,
+            translate=req.translate,
+            source_language=req.source_language,
+            target_language=req.target_language,
         )
 
         result = pipeline.process(job)

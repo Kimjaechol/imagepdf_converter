@@ -181,7 +181,16 @@ class Pipeline:
     def process(self, job: PdfJob) -> DocumentResult:
         """Process a single PDF file end-to-end."""
         start = time.time()
-        self.progress_callback("Starting conversion", 0.0)
+
+        # Translation mode logging
+        if job.translate:
+            src = job.source_language or "auto-detect"
+            self.progress_callback(
+                f"Starting conversion + translation ({src} → {job.target_language})",
+                0.0,
+            )
+        else:
+            self.progress_callback("Starting conversion", 0.0)
 
         work_dir = Path(tempfile.mkdtemp(prefix="pdfconv_"))
         images_dir = work_dir / "images"
@@ -192,9 +201,11 @@ class Pipeline:
         chunks = self.splitter.split(job.input_path, work_dir / "chunks")
         total_pages = self.splitter.get_page_count(job.input_path)
 
-        # 2. Process chunks in parallel
+        # 2. Process chunks in parallel (translation options passed through)
         self.progress_callback("Processing chunks in parallel", 0.10)
-        chunk_results = self._process_chunks_parallel(chunks, images_dir, output_images_dir)
+        chunk_results = self._process_chunks_parallel(
+            chunks, images_dir, output_images_dir, job=job,
+        )
 
         # 3. Merge chunks
         self.progress_callback("Merging results", 0.75)
@@ -280,6 +291,7 @@ class Pipeline:
         chunks: list[PdfChunk],
         images_dir: Path,
         output_images_dir: Path,
+        job: PdfJob | None = None,
     ) -> list[ChunkResult]:
         """Process all chunks using thread pool."""
         results: list[ChunkResult] = []
@@ -293,6 +305,7 @@ class Pipeline:
                     chunk,
                     chunk_img_dir,
                     output_images_dir,
+                    job,
                 )
                 futures[future] = chunk
 
@@ -318,10 +331,11 @@ class Pipeline:
         chunk: PdfChunk,
         images_dir: Path,
         output_images_dir: Path,
+        job: PdfJob | None = None,
     ) -> ChunkResult:
         """Process a single chunk through the pipeline."""
         if self.cfg.pipeline_mode == "unified_vision":
-            return self._process_chunk_unified(chunk, images_dir, output_images_dir)
+            return self._process_chunk_unified(chunk, images_dir, output_images_dir, job)
         return self._process_chunk_standard(chunk, images_dir, output_images_dir)
 
     def _process_chunk_unified(
@@ -329,6 +343,7 @@ class Pipeline:
         chunk: PdfChunk,
         images_dir: Path,
         output_images_dir: Path,
+        job: PdfJob | None = None,
     ) -> ChunkResult:
         """Process a chunk via unified Gemini call with TAG=0/1 optimization.
 
@@ -338,6 +353,10 @@ class Pipeline:
           3. TAG=0 pages: run local Surya OCR first → send TEXT ONLY to Gemini
           4. TAG=1 pages: send page IMAGES to Gemini for full vision analysis
           5. Extract figure/equation images locally
+
+        When translation is enabled (job.translate=True), ALL pages are sent
+        to Gemini with translation instructions embedded in the prompt.
+        TAG=0 pages still send only text (no images), keeping costs low.
         """
         page_data_list = self.renderer.render_chunk(chunk, images_dir)
 
@@ -366,9 +385,19 @@ class Pipeline:
                         page_idx, len(local_blocks),
                     )
 
+        # Translation options from job
+        translate = job.translate if job else False
+        source_language = job.source_language if job else ""
+        target_language = job.target_language if job else "ko"
+
         # Unified processing: TAG=0 → text only, TAG=1 → vision
+        # Translation instructions are embedded in the same prompt
         page_results = self.unified_vision.process_pages(
-            page_data_list, ocr_blocks
+            page_data_list,
+            ocr_blocks,
+            translate=translate,
+            source_language=source_language,
+            target_language=target_language,
         )
 
         # Fallback: if unified vision failed, use standard pipeline
