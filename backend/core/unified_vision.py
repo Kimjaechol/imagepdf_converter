@@ -87,6 +87,7 @@ class PageClassification:
     num_text_blocks: int = 0
     num_vector_rects: int = 0
     num_vector_lines: int = 0
+    is_scanned: bool = False  # True if page has no digital text (scanned/image PDF)
 
     @property
     def is_complex(self) -> bool:
@@ -260,9 +261,10 @@ class UnifiedVisionProcessor:
                     cls.has_multi_column = True
 
             # Image-only PDF page (no digital text, probably scanned)
-            # → treat as complex since Gemini must do OCR
-            if cls.num_text_blocks == 0:
-                cls.has_figures = True
+            # → still TAG=0 if no figures/tables detected; local OCR can handle it.
+            # Only force TAG=1 if the page has actual figures or tables.
+            if cls.num_text_blocks == 0 and not cls.has_figures and not cls.has_tables:
+                cls.is_scanned = True
 
             results[page_idx] = cls
 

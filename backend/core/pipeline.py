@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -410,11 +410,14 @@ class Pipeline:
 
         # Extract images (figures, equations) – still done locally
         image_extractor = ImageExtractor(output_dir=output_images_dir)
-        for pr, pd in zip(page_results, page_data_list):
-            img_path = pd["image_path"]
-            pr.blocks = image_extractor.extract_images(
-                img_path, pr.blocks, pr.page_index
-            )
+        page_data_by_idx = {pd["page_index"]: pd for pd in page_data_list}
+        for pr in page_results:
+            pd = page_data_by_idx.get(pr.page_index)
+            if pd:
+                img_path = pd["image_path"]
+                pr.blocks = image_extractor.extract_images(
+                    img_path, pr.blocks, pr.page_index
+                )
 
         return ChunkResult(
             chunk_index=chunk.chunk_index,
