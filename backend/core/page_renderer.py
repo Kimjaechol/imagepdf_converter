@@ -81,6 +81,58 @@ class PageRenderer:
         doc.close()
         return results
 
+    def render_pdf(
+        self,
+        pdf_path: Path,
+        images_dir: Path,
+        page_indices: list[int] | None = None,
+    ) -> list[dict]:
+        """Render pages directly from the original PDF (no pre-splitting).
+
+        Args:
+            pdf_path: Path to the original PDF file.
+            images_dir: Directory to save rendered page images.
+            page_indices: Specific page indices to render (0-based).
+                          If None, renders ALL pages.
+
+        Returns same format as render_chunk().
+        """
+        images_dir.mkdir(parents=True, exist_ok=True)
+        doc = fitz.open(str(pdf_path))
+        total = len(doc)
+
+        if page_indices is None:
+            page_indices = list(range(total))
+
+        results = []
+        for abs_page in page_indices:
+            if abs_page < 0 or abs_page >= total:
+                continue
+            page = doc[abs_page]
+
+            mat = fitz.Matrix(self._zoom, self._zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            img_path = images_dir / f"page_{abs_page:04d}.png"
+            pix.save(str(img_path))
+
+            width = pix.width
+            height = pix.height
+
+            digital_blocks = self._extract_text_blocks(page, abs_page)
+            line_objects = self._extract_drawings(page)
+
+            results.append({
+                "page_index": abs_page,
+                "image_path": str(img_path),
+                "width": width,
+                "height": height,
+                "digital_blocks": digital_blocks,
+                "lines": line_objects,
+            })
+
+        doc.close()
+        return results
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

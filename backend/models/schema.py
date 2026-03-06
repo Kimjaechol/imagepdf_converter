@@ -162,6 +162,11 @@ class LayoutBlock:
     column_index: int = 0
     # Children blocks (for nested structures)
     children: list["LayoutBlock"] = field(default_factory=list)
+    # ── Content anchoring & sequential numbering ──
+    # Document-wide sequential number for tables/figures (1-based)
+    content_seq: int = 0          # e.g. table_seq=3 → "표 3" / "Table 3"
+    # ID of the parent block this caption belongs to
+    parent_block_id: str = ""     # for CAPTION → links to TABLE/FIGURE id
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +213,10 @@ class PdfJob:
     output_dir: Path = field(default_factory=lambda: Path())
     filename: str = ""
     output_formats: list[str] = field(default_factory=lambda: ["html", "markdown"])
+    # Translation options
+    translate: bool = False
+    source_language: str = ""      # e.g. "ja", "en", "zh" (auto-detect if empty)
+    target_language: str = "ko"    # e.g. "ko", "en", "ja"
 
 
 @dataclass

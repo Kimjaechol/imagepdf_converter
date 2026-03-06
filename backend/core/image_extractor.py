@@ -48,7 +48,14 @@ class ImageExtractor:
             is_photo = (cropped.width * cropped.height > 200_000 and
                         block.block_type == BlockType.FIGURE)
             ext = "jpg" if is_photo else "png"
-            filename = f"{block.block_type.value}_{page_index:04d}_{uuid.uuid4().hex[:6]}.{ext}"
+            # Deterministic filename: type_page_seq_bbox.ext
+            # This makes it traceable which block produced which image file.
+            seq_tag = f"_seq{block.content_seq}" if block.content_seq > 0 else ""
+            bbox_tag = (
+                f"_{int(block.bbox.y0)}_{int(block.bbox.x0)}"
+                if block.bbox else f"_{uuid.uuid4().hex[:6]}"
+            )
+            filename = f"{block.block_type.value}_{page_index:04d}{seq_tag}{bbox_tag}.{ext}"
             save_path = self.output_dir / filename
             if ext == "jpg":
                 cropped.save(str(save_path), "JPEG", quality=90)

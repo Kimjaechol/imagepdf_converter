@@ -156,11 +156,16 @@ class OcrEngine:
             if results:
                 for i, line in enumerate(results[0].text_lines):
                     b = line.bbox
+                    bbox = BBox(x0=b[0], y0=b[1], x1=b[2], y1=b[3])
+                    # Estimate font size from bbox height (~75% of line height)
+                    est_font_size = bbox.height * 0.75
+                    style = TextStyle(font_size=round(est_font_size, 1))
                     blocks.append(LayoutBlock(
                         id=f"ocr_{page_index}_{i}",
                         block_type=BlockType.PARAGRAPH,
-                        bbox=BBox(x0=b[0], y0=b[1], x1=b[2], y1=b[3]),
+                        bbox=bbox,
                         text=line.text,
+                        style=style,
                         confidence=line.confidence if hasattr(line, "confidence") else 0.8,
                         page_index=page_index,
                     ))

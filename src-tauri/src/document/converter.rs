@@ -58,8 +58,8 @@ pub async fn convert_file(
         author: meta.author,
     };
 
-    // Save images
-    let img_dir = Path::new(output_dir).join(format!("{}_images", stem));
+    // Save images - directory name must match HTML references (src="images/...")
+    let img_dir = Path::new(output_dir).join("images");
     if !images.is_empty() {
         tokio::fs::create_dir_all(&img_dir)
             .await
@@ -79,13 +79,15 @@ pub async fn convert_file(
         }
     }
 
+    // Always keep HTML content for potential translation even if not saving HTML
+    result.html = Some(html_content.clone());
+
     // Save HTML
     if want_html {
         let html_path = Path::new(output_dir).join(format!("{}.html", stem));
         tokio::fs::write(&html_path, &html_content)
             .await
             .map_err(|e| format!("Cannot write HTML: {}", e))?;
-        result.html = Some(html_content.clone());
         result.output_files.push(html_path.to_string_lossy().to_string());
     }
 
@@ -147,6 +149,11 @@ fn extract_attr<'a>(tag_buf: &'a str, attr_name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Public wrapper for HTML → Markdown conversion (used by translation flow)
+pub fn html_to_markdown_public(html: &str) -> String {
+    html_to_markdown(html)
 }
 
 /// Simple HTML → Markdown converter

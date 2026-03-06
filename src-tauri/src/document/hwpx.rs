@@ -1,6 +1,7 @@
 use super::converter::DocMeta;
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use std::collections::HashSet;
 use std::io::Read;
 use zip::ZipArchive;
 
@@ -83,7 +84,8 @@ fn convert_sync(path: &str) -> Result<(String, Vec<(String, Vec<u8>)>, DocMeta),
         if idx > 0 {
             all_html.push_str("<div class=\"page-break\"></div>\n");
         }
-        all_html.push_str(&parse_hwpx_section(&section_xml));
+        let image_names: HashSet<String> = images.iter().map(|(n, _)| n.clone()).collect();
+        all_html.push_str(&parse_hwpx_section(&section_xml, &image_names));
     }
 
     meta.page_count = Some(section_names.len() as u32);
@@ -120,7 +122,7 @@ img {{ max-width: 100%; height: auto; }}
 }
 
 #[allow(unused_assignments)]
-fn parse_hwpx_section(xml: &str) -> String {
+fn parse_hwpx_section(xml: &str, image_names: &HashSet<String>) -> String {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
@@ -137,6 +139,7 @@ fn parse_hwpx_section(xml: &str) -> String {
     let mut para_alignment: Option<String> = None;
     let mut cell_colspan: u32 = 1;
     let mut cell_rowspan: u32 = 1;
+    let mut first_table_row = true;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -188,8 +191,45 @@ fn parse_hwpx_section(xml: &str) -> String {
                             }
                         }
                     }
+                    // HWPX image elements: <hp:img>, <hp:pic>, <hc:img>
+                    "img" | "pic" | "picture" => {
+                        // Try to extract binaryItemIDRef or binItemIDRef attribute
+                        let mut bin_ref: Option<String> = None;
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            if key == "binaryItemIDRef" || key == "binItemIDRef"
+                                || key == "itemIDRef" || key == "href"
+                            {
+                                bin_ref = Some(
+                                    String::from_utf8_lossy(&attr.value).to_string()
+                                );
+                            }
+                        }
+                        if let Some(ref_name) = bin_ref {
+                            // Match against known image filenames
+                            let matched = image_names.iter().find(|n| {
+                                n.contains(&ref_name)
+                                    || ref_name.contains(n.as_str())
+                                    || n.split('.').next() == ref_name.split('.').next()
+                            });
+                            if let Some(name) = matched {
+                                let tag = format!(
+                                    "<img src=\"images/{}\" alt=\"{}\">",
+                                    html_escape::encode_text(name),
+                                    html_escape::encode_text(name)
+                                );
+                                if in_paragraph || in_table_cell {
+                                    text_buf.push_str(&tag);
+                                } else {
+                                    html.push_str(&tag);
+                                    html.push('\n');
+                                }
+                            }
+                        }
+                    }
                     "tbl" => {
-                        html.push_str("<table>\n");
+                        first_table_row = true;
+                        html.push_str("<table>\n<thead>\n");
                     }
                     "tr" => {
                         html.push_str("<tr>");
@@ -210,6 +250,7 @@ fn parse_hwpx_section(xml: &str) -> String {
                                     .parse().unwrap_or(1);
                             }
                         }
+                        let cell_tag = if first_table_row { "th" } else { "td" };
                         let mut attrs = String::new();
                         if cell_colspan > 1 {
                             attrs.push_str(&format!(" colspan=\"{}\"", cell_colspan));
@@ -217,7 +258,7 @@ fn parse_hwpx_section(xml: &str) -> String {
                         if cell_rowspan > 1 {
                             attrs.push_str(&format!(" rowspan=\"{}\"", cell_rowspan));
                         }
-                        html.push_str(&format!("<td{}>", attrs));
+                        html.push_str(&format!("<{}{}>", cell_tag, attrs));
                     }
                     "lineseg" | "lineBreak" => {
                         text_buf.push_str("<br>");
@@ -272,14 +313,27 @@ fn parse_hwpx_section(xml: &str) -> String {
                         in_run = false;
                     }
                     "tbl" => {
+                        if !first_table_row {
+                            html.push_str("</tbody>\n");
+                        } else {
+                            html.push_str("</thead>\n");
+                        }
                         html.push_str("</table>\n");
                     }
                     "tr" => {
                         html.push_str("</tr>\n");
+                        if first_table_row {
+                            first_table_row = false;
+                            html.push_str("</thead>\n<tbody>\n");
+                        }
                     }
                     "tc" => {
                         in_table_cell = false;
-                        html.push_str("</td>");
+                        // first_table_row is still true during the first row's cells
+                        // because it flips at </tr>. So check: if we haven't
+                        // transitioned yet, we're still in header.
+                        let cell_tag = if first_table_row { "th" } else { "td" };
+                        html.push_str(&format!("</{}>", cell_tag));
                     }
                     _ => {}
                 }
