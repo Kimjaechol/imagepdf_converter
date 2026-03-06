@@ -436,21 +436,110 @@ class Pipeline:
                     pct,
                 )
 
+        # ── SAFETY LAYER 1: Detect missing & duplicate pages ──
+        self.progress_callback("Verifying page integrity", 0.71)
+        expected_indices = {pd["page_index"] for pd in all_page_data}
+        result_index_map: dict[int, PageResult] = {}
+
+        for pr in all_results:
+            if pr.page_index in result_index_map:
+                # Duplicate: keep the one with more blocks (richer content)
+                existing = result_index_map[pr.page_index]
+                if len(pr.blocks) > len(existing.blocks):
+                    logger.warning(
+                        "Duplicate page %d: replacing (%d blocks → %d blocks)",
+                        pr.page_index, len(existing.blocks), len(pr.blocks),
+                    )
+                    result_index_map[pr.page_index] = pr
+                else:
+                    logger.warning(
+                        "Duplicate page %d: keeping first (%d blocks), "
+                        "discarding duplicate (%d blocks)",
+                        pr.page_index, len(existing.blocks), len(pr.blocks),
+                    )
+            elif pr.page_index in expected_indices:
+                result_index_map[pr.page_index] = pr
+            else:
+                # Page index not in our document → discard
+                logger.warning(
+                    "Discarding result with unexpected page_index %d "
+                    "(not in document pages %s)",
+                    pr.page_index, sorted(expected_indices),
+                )
+
+        # ── SAFETY LAYER 2: Create fallback for missing pages ──
+        page_data_by_idx = {pd["page_index"]: pd for pd in all_page_data}
+        missing_indices = expected_indices - set(result_index_map.keys())
+
+        if missing_indices:
+            logger.warning(
+                "MISSING PAGES detected: %s out of %d total. "
+                "Creating fallback results from OCR/digital text.",
+                sorted(missing_indices), len(expected_indices),
+            )
+            for miss_idx in missing_indices:
+                pd = page_data_by_idx[miss_idx]
+                # Build fallback PageResult from available OCR/digital text
+                fallback_blocks: list[LayoutBlock] = []
+                if miss_idx in ocr_blocks:
+                    fallback_blocks = list(ocr_blocks[miss_idx])
+                    logger.info(
+                        "Fallback for page %d: using %d OCR blocks",
+                        miss_idx, len(fallback_blocks),
+                    )
+                else:
+                    logger.warning(
+                        "Fallback for page %d: no text available, "
+                        "page will be empty in output",
+                        miss_idx,
+                    )
+
+                result_index_map[miss_idx] = PageResult(
+                    page_index=miss_idx,
+                    width=pd["width"],
+                    height=pd["height"],
+                    blocks=fallback_blocks,
+                )
+
         # 7. Extract images (figures, equations) locally
         self.progress_callback("Extracting images", 0.72)
         image_extractor = ImageExtractor(output_dir=output_images_dir)
-        page_data_by_idx = {pd["page_index"]: pd for pd in all_page_data}
-        for pr in all_results:
+        for pr in result_index_map.values():
             pd = page_data_by_idx.get(pr.page_index)
             if pd:
                 pr.blocks = image_extractor.extract_images(
                     pd["image_path"], pr.blocks, pr.page_index,
                 )
 
-        # Sort by page index to restore document order
-        all_results.sort(key=lambda pr: pr.page_index)
+        # ── SAFETY LAYER 3: Final integrity check ──
+        # Build results sorted by page_index (guaranteed document order)
+        all_results_verified = [
+            result_index_map[idx]
+            for idx in sorted(result_index_map.keys())
+        ]
 
-        return all_results, total_pages
+        # Verify 1:1 correspondence with input pages
+        final_indices = [pr.page_index for pr in all_results_verified]
+        if final_indices != sorted(expected_indices):
+            logger.error(
+                "CRITICAL: Final page indices %s do not match expected %s. "
+                "Document integrity may be compromised!",
+                final_indices, sorted(expected_indices),
+            )
+
+        if len(all_results_verified) != len(expected_indices):
+            logger.error(
+                "CRITICAL: Final page count (%d) != expected (%d). "
+                "Document may have missing or extra pages!",
+                len(all_results_verified), len(expected_indices),
+            )
+
+        logger.info(
+            "Page integrity verified: %d/%d pages present, %d recovered via fallback",
+            len(all_results_verified), len(expected_indices), len(missing_indices),
+        )
+
+        return all_results_verified, total_pages
 
     # ------------------------------------------------------------------
     # Parallel chunk processing (used by standard mode)

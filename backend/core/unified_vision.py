@@ -615,7 +615,13 @@ CRITICAL:
         response_text: str,
         page_data_list: list[dict],
     ) -> list[PageResult]:
-        """Parse the unified JSON response into PageResult objects."""
+        """Parse the unified JSON response into PageResult objects.
+
+        Safety: validates that AI-returned page_index values match the
+        pages we actually sent.  If the AI returns wrong indices (e.g.
+        0,1,2 instead of 5,6,7), we remap them by positional order to
+        the expected page indices.
+        """
         try:
             text = response_text.strip()
             if "```json" in text:
@@ -626,16 +632,60 @@ CRITICAL:
             data = json.loads(text)
             pages_data = data.get("pages", [])
 
+            # Expected page indices (in the order we sent them)
+            expected_indices = [pd["page_index"] for pd in page_data_list]
+            expected_set = set(expected_indices)
+
             page_dims = {
                 pd["page_index"]: (pd["width"], pd["height"])
                 for pd in page_data_list
             }
 
-            results: list[PageResult] = []
-            for page_json in pages_data:
-                page_idx = page_json.get("page_index", 0)
-                width, height = page_dims.get(page_idx, (0, 0))
+            # ── Safety check: detect if AI returned wrong page indices ──
+            returned_indices = [p.get("page_index", -1) for p in pages_data]
+            returned_set = set(returned_indices)
 
+            # Case 1: AI returned correct indices (subset of expected)
+            indices_valid = returned_set.issubset(expected_set)
+
+            # Case 2: AI returned sequential 0,1,2... instead of real indices
+            # Detect this by checking if returned indices don't overlap with
+            # expected but match positionally (same count or close)
+            needs_remap = False
+            if not indices_valid and len(pages_data) <= len(expected_indices):
+                needs_remap = True
+                logger.warning(
+                    "AI returned wrong page indices %s, expected %s. "
+                    "Remapping by positional order.",
+                    returned_indices, expected_indices,
+                )
+
+            results: list[PageResult] = []
+            for pos, page_json in enumerate(pages_data):
+                if needs_remap:
+                    # Remap: use positional order to assign correct page_index
+                    if pos < len(expected_indices):
+                        page_idx = expected_indices[pos]
+                    else:
+                        logger.warning(
+                            "AI returned more pages (%d) than expected (%d), "
+                            "skipping extra page at position %d.",
+                            len(pages_data), len(expected_indices), pos,
+                        )
+                        continue
+                else:
+                    page_idx = page_json.get("page_index", 0)
+                    # Even when indices seem valid, reject any page_index
+                    # that wasn't in our batch
+                    if page_idx not in expected_set:
+                        logger.warning(
+                            "AI returned unexpected page_index %d "
+                            "(expected one of %s), skipping.",
+                            page_idx, expected_indices,
+                        )
+                        continue
+
+                width, height = page_dims.get(page_idx, (0, 0))
                 blocks = self._parse_blocks(page_json.get("blocks", []), page_idx)
 
                 results.append(PageResult(
@@ -645,7 +695,29 @@ CRITICAL:
                     blocks=blocks,
                 ))
 
-            return results
+            # ── Safety: detect duplicate page indices in results ──
+            seen_indices: set[int] = set()
+            deduped: list[PageResult] = []
+            for pr in results:
+                if pr.page_index in seen_indices:
+                    logger.warning(
+                        "Duplicate page_index %d in AI response, keeping first occurrence.",
+                        pr.page_index,
+                    )
+                    continue
+                seen_indices.add(pr.page_index)
+                deduped.append(pr)
+
+            # ── Safety: log any pages the AI failed to return ──
+            missing = expected_set - seen_indices
+            if missing:
+                logger.warning(
+                    "AI did not return results for pages %s (batch had %s). "
+                    "These pages will need fallback processing.",
+                    sorted(missing), expected_indices,
+                )
+
+            return deduped
 
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             logger.error("Failed to parse unified vision response: %s", exc)
