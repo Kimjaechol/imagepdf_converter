@@ -7,7 +7,34 @@ mod moa;
 
 use tauri::{Emitter, Manager};
 
+fn show_error_msgbox(title: &str, msg: &str) {
+    #[cfg(windows)]
+    {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use std::iter::once;
+        let title_wide: Vec<u16> = OsStr::new(title).encode_wide().chain(once(0)).collect();
+        let msg_wide: Vec<u16> = OsStr::new(msg).encode_wide().chain(once(0)).collect();
+        unsafe {
+            extern "system" {
+                fn MessageBoxW(hwnd: *mut std::ffi::c_void, text: *const u16, caption: *const u16, utype: u32) -> i32;
+            }
+            MessageBoxW(std::ptr::null_mut(), msg_wide.as_ptr(), title_wide.as_ptr(), 0x10);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        eprintln!("{}: {}", title, msg);
+    }
+}
+
 fn main() {
+    // Catch panics and show message box
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("앱에서 예기치 않은 오류가 발생했습니다:\n\n{}", info);
+        show_error_msgbox("MoA 문서 변환기 - 오류", &msg);
+    }));
+
     // Set up file logging so we can diagnose launch failures
     let log_dir = dirs_next::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -32,6 +59,8 @@ fn main() {
 
     tracing::info!("=== App starting ===");
     tracing::info!("Log file: {:?}", log_file);
+    tracing::info!("Exe path: {:?}", std::env::current_exe());
+    tracing::info!("Current dir: {:?}", std::env::current_dir());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -109,8 +138,9 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            tracing::error!("Tauri application failed to start: {}", e);
-            eprintln!("error while running tauri application: {}", e);
+            let msg = format!("앱을 시작할 수 없습니다:\n\n{}", e);
+            tracing::error!("{}", msg);
+            show_error_msgbox("MoA 문서 변환기 - 시작 실패", &msg);
         });
     tracing::info!("=== App exiting ===");
 }

@@ -52,7 +52,6 @@
     }
   },
   "plugins": {
-    "dialog": {},
     "shell": { "open": true },
     "fs": {
       "scope": {
