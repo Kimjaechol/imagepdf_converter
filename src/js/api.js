@@ -78,12 +78,15 @@ export async function openFile(path) {
 }
 
 // ─── PDF Conversion (Python Backend) ──────────────────
-export async function convertPdf(inputPath, outputDir, formats) {
+export async function convertPdf(inputPath, outputDir, formats, translate, sourceLang, targetLang) {
   return await invoke("convert_pdf", {
     request: {
       input_path: inputPath,
       output_dir: outputDir || null,
       formats: formats || ["html", "markdown"],
+      translate: translate || false,
+      source_language: sourceLang || "",
+      target_language: targetLang || "ko",
     },
   });
 }
@@ -101,11 +104,14 @@ export async function convertBatch(folderPath, outputDir, formats, recursive) {
 
 // ─── Document Conversion (Unified) ────────────────────
 // Routes to Rust-native (docx/hwpx/xlsx/pptx) or Python pipeline (pdf)
-export async function convertDocument(inputPath, outputDir, formats) {
+export async function convertDocument(inputPath, outputDir, formats, translate, sourceLang, targetLang) {
   return await invoke("convert_document", {
     input_path: inputPath,
     output_dir: outputDir || null,
     formats: formats || ["html", "markdown"],
+    translate: translate || false,
+    source_language: sourceLang || "",
+    target_language: targetLang || "ko",
   });
 }
 

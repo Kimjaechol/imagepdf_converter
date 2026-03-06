@@ -10,6 +10,9 @@ const state = {
   outputDir: null,
   mode: "single", // single | batch
   formats: ["html", "markdown"],
+  translate: false,
+  sourceLanguage: "",
+  targetLanguage: "ko",
   currentJobId: null,
   ws: null,
   backendHealthy: false,
@@ -66,6 +69,22 @@ function setupEventListeners() {
     cb.addEventListener("change", () => {
       state.formats = Array.from($$(".format-check:checked")).map((c) => c.value);
     });
+  });
+
+  // Translation toggle
+  const translateToggle = $("#translate-toggle");
+  if (translateToggle) {
+    translateToggle.addEventListener("change", () => {
+      state.translate = translateToggle.checked;
+      const opts = $("#translate-options");
+      if (opts) opts.style.display = translateToggle.checked ? "block" : "none";
+    });
+  }
+  $("#source-language")?.addEventListener("change", (e) => {
+    state.sourceLanguage = e.target.value;
+  });
+  $("#target-language")?.addEventListener("change", (e) => {
+    state.targetLanguage = e.target.value;
   });
 
   // Convert button
@@ -272,11 +291,15 @@ async function convertSingle() {
   // Unified conversion - routes automatically based on file extension
   if (api.isRustNativeFormat(ext)) {
     // Rust-native conversion (instant, no job queue)
-    updateProgress(30, `${ext.toUpperCase()} 변환 중...`);
+    const label = state.translate ? `${ext.toUpperCase()} 변환 + 번역 중...` : `${ext.toUpperCase()} 변환 중...`;
+    updateProgress(30, label);
     const result = await api.convertDocument(
       state.selectedFile,
       state.outputDir,
-      state.formats
+      state.formats,
+      state.translate,
+      state.sourceLanguage,
+      state.targetLanguage
     );
     updateProgress(100, "변환 완료!");
     showResults(result);
@@ -286,7 +309,10 @@ async function convertSingle() {
     const resp = await api.convertPdf(
       state.selectedFile,
       state.outputDir,
-      state.formats
+      state.formats,
+      state.translate,
+      state.sourceLanguage,
+      state.targetLanguage
     );
     const jobId = resp.job_id;
     state.currentJobId = jobId;

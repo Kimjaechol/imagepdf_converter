@@ -93,6 +93,12 @@ class SetApiKeyRequest(BaseModel):
     api_key: str
 
 
+class TranslateHtmlRequest(BaseModel):
+    html: str
+    source_language: str = ""
+    target_language: str = "ko"
+
+
 class PurchaseCreditsRequest(BaseModel):
     user_id: str
     amount_usd: float
@@ -272,6 +278,116 @@ async def get_api_key_status():
         "configured": bool(key),
         "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
     }
+
+
+# ---------------------------------------------------------------------------
+# HTML Translation (for non-PDF documents)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/translate-html")
+async def translate_html(req: TranslateHtmlRequest):
+    """Translate HTML content via Gemini while preserving HTML tags."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API key not configured")
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, _translate_html_sync, req.html, req.source_language,
+            req.target_language, api_key,
+        )
+        return {"translated_html": result}
+    except Exception as exc:
+        logger.error("Translation failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _translate_html_sync(
+    html: str, source_language: str, target_language: str, api_key: str,
+) -> str:
+    """Translate HTML using Gemini, preserving all HTML structure."""
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+
+    cfg = _get_config()
+    model = genai.GenerativeModel(cfg.gemini_model)
+
+    src = source_language or "auto-detected"
+    lang_names = {
+        "ko": "Korean", "en": "English", "ja": "Japanese",
+        "zh": "Chinese", "de": "German", "fr": "French",
+        "es": "Spanish", "vi": "Vietnamese", "th": "Thai",
+        "ru": "Russian", "pt": "Portuguese",
+    }
+    tgt_name = lang_names.get(target_language, target_language)
+
+    # Split HTML into chunks if too large (Gemini has token limits)
+    # Process <body> content only, preserving head/style
+    body_start = html.find("<body")
+    body_end = html.rfind("</body>")
+
+    if body_start == -1 or body_end == -1:
+        # No body tags, translate the whole thing
+        head_part = ""
+        body_content = html
+        tail_part = ""
+    else:
+        body_tag_end = html.index(">", body_start) + 1
+        head_part = html[:body_tag_end]
+        body_content = html[body_tag_end:body_end]
+        tail_part = html[body_end:]
+
+    # Chunk body content for large documents
+    max_chunk = 30000  # characters per chunk
+    chunks = []
+    if len(body_content) <= max_chunk:
+        chunks = [body_content]
+    else:
+        # Split on block-level tags to avoid breaking mid-tag
+        import re
+        parts = re.split(r'(?=<(?:div|h[1-6]|p|table|section)[\s>])', body_content)
+        current = ""
+        for part in parts:
+            if len(current) + len(part) > max_chunk and current:
+                chunks.append(current)
+                current = part
+            else:
+                current += part
+        if current:
+            chunks.append(current)
+
+    translated_chunks = []
+    for chunk in chunks:
+        prompt = f"""Translate the following HTML content from {src} to {tgt_name}.
+
+CRITICAL RULES:
+1. Preserve ALL HTML tags, attributes, and structure EXACTLY as they are
+2. Only translate the visible text content between tags
+3. Do NOT translate tag names, attribute names, attribute values, CSS, or JavaScript
+4. Do NOT add, remove, or modify any HTML tags
+5. Do NOT wrap the output in code fences or add any explanation
+6. Preserve all whitespace and line breaks in the original
+7. If text is already in {tgt_name}, keep it unchanged
+
+HTML to translate:
+{chunk}"""
+
+        response = model.generate_content(prompt)
+        translated = response.text.strip()
+
+        # Remove markdown code fences if Gemini added them
+        if translated.startswith("```html"):
+            translated = translated[7:]
+        elif translated.startswith("```"):
+            translated = translated[3:]
+        if translated.endswith("```"):
+            translated = translated[:-3]
+
+        translated_chunks.append(translated.strip())
+
+    translated_body = "\n".join(translated_chunks)
+    return head_part + translated_body + tail_part
 
 
 # ---------------------------------------------------------------------------
