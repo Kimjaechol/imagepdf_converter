@@ -52,12 +52,6 @@
     }
   },
   "plugins": {
-    "shell": { "open": true },
-    "fs": {
-      "scope": {
-        "allow": ["**"],
-        "deny": []
-      }
-    }
+    "shell": { "open": true }
   }
 }
