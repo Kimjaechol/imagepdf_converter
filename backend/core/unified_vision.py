@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 
 # Batch sizes per page type
 _BATCH_TEXT_ONLY = 30   # text-only pages can be batched aggressively
-_BATCH_COMPLEX = 10     # complex pages need more output per page
+_BATCH_COMPLEX = 5      # complex pages: 5 is optimal for accuracy + cost
+                        # - 10 pages risks output truncation (8K output limit)
+                        # - 5 pages keeps all content within output budget
+                        # - More parallel batches = faster total processing
 
 
 @dataclass
@@ -327,7 +330,10 @@ class UnifiedVisionProcessor:
             )
 
             # Single text-only call – no images in parts
-            response = model.generate_content(prompt)
+            response = model.generate_content(
+                prompt,
+                generation_config={"max_output_tokens": 8192},
+            )
 
             return self._parse_unified_response(response.text, page_data_list)
 
@@ -406,7 +412,10 @@ class UnifiedVisionProcessor:
             parts.append(prompt)
 
             # Multimodal call – images + text prompt
-            response = model.generate_content(parts)
+            response = model.generate_content(
+                parts,
+                generation_config={"max_output_tokens": 8192},
+            )
 
             return self._parse_unified_response(response.text, page_data_list)
 
