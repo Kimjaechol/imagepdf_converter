@@ -189,10 +189,28 @@
       <div class="setting-group">
         <label>Gemini API Key</label>
         <div style="display:flex;gap:4px">
-          <input type="password" id="set-api-key" placeholder="API 키 입력" class="setting-input" style="flex:1">
+          <input type="password" id="set-api-key" placeholder="Gemini API 키 입력" class="setting-input" style="flex:1">
           <button id="btn-save-api-key" class="btn btn-sm">저장</button>
         </div>
         <div id="api-key-status" class="setting-hint"></div>
+      </div>
+
+      <div class="setting-group">
+        <label>Upstage Document Parse API Key</label>
+        <div style="display:flex;gap:4px">
+          <input type="password" id="set-upstage-api-key" placeholder="Upstage API 키 입력" class="setting-input" style="flex:1">
+          <button id="btn-save-upstage-api-key" class="btn btn-sm">저장</button>
+        </div>
+        <div id="upstage-api-key-status" class="setting-hint"></div>
+      </div>
+
+      <div class="setting-group">
+        <label>API 비용 안내 (1000페이지 기준)</label>
+        <div class="setting-hint" style="line-height:1.8">
+          Upstage Document Parse: ~$10 ($0.01/페이지)<br>
+          Gemini Flash-Lite (시각비교): ~$0.20<br>
+          합계: ~$10.20 (디지털 PDF만 사용 시 ~$0.20)
+        </div>
       </div>
 
       <div class="section-label" style="margin-top:20px">크레딧 관리</div>

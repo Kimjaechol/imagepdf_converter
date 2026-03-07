@@ -571,9 +571,28 @@
           <div class="hint">높을수록 정확하지만 느림 (300 추천)</div>
         </div>
         <div class="setting-group">
-          <label>Gemini API 키</label>
-          <input type="text" id="geminiKey" placeholder="입력하세요..." style="font-family:monospace;font-size:12px;">
-          <div class="hint">VLM/LLM 모드 사용 시 필요 (선택사항)</div>
+          <label>Gemini API Key</label>
+          <div style="display:flex;gap:6px">
+            <input type="password" id="geminiKey" placeholder="Gemini API 키 입력" style="font-family:monospace;font-size:12px;flex:1">
+            <button class="browse-btn" onclick="saveGeminiKey()" style="padding:8px 12px;font-size:12px">저장</button>
+          </div>
+          <div class="hint" id="geminiKeyStatus">VLM/LLM 모드 사용 시 필요 (선택사항)</div>
+        </div>
+        <div class="setting-group">
+          <label>Upstage Document Parse API Key</label>
+          <div style="display:flex;gap:6px">
+            <input type="password" id="upstageKey" placeholder="Upstage API 키 입력" style="font-family:monospace;font-size:12px;flex:1">
+            <button class="browse-btn" onclick="saveUpstageKey()" style="padding:8px 12px;font-size:12px">저장</button>
+          </div>
+          <div class="hint" id="upstageKeyStatus">스캔 PDF OCR에 사용 (선택사항)</div>
+        </div>
+        <div class="setting-group">
+          <label>API 비용 안내 (1000페이지 기준)</label>
+          <div class="hint" style="line-height:1.8">
+            Upstage Document Parse: ~$10 ($0.01/페이지)<br>
+            Gemini Flash-Lite (시각비교): ~$0.20<br>
+            합계: ~$10.20 (디지털 PDF만 사용 시 ~$0.20)
+          </div>
         </div>
       </div>
     </div>
@@ -650,6 +669,7 @@
       checkBackend();
       setInterval(checkBackend, 5000);
       setupDragDrop();
+      loadApiKeyStatuses();
     }
 
     async function checkBackend() {
@@ -674,6 +694,7 @@
       } else {
         document.querySelectorAll(".tab")[1].classList.add("active");
         document.getElementById("tabSettings").classList.add("active");
+        loadApiKeyStatuses();
       }
     }
 
@@ -819,6 +840,47 @@
       for (const [k, v] of pairs) {
         try { await fetch(`${backendUrl}/api/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k, value: v }) }); } catch {}
       }
+    }
+
+    async function saveGeminiKey() {
+      const key = document.getElementById("geminiKey").value.trim();
+      if (!key) return;
+      try {
+        await fetch(`${backendUrl}/api/settings/api-key`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: key }) });
+        document.getElementById("geminiKey").value = "";
+        document.getElementById("geminiKeyStatus").textContent = "저장 완료";
+        document.getElementById("geminiKeyStatus").style.color = "#4caf50";
+        loadApiKeyStatuses();
+      } catch (e) { alert("Gemini API 키 저장 실패: " + e.message); }
+    }
+
+    async function saveUpstageKey() {
+      const key = document.getElementById("upstageKey").value.trim();
+      if (!key) return;
+      try {
+        await fetch(`${backendUrl}/api/settings/upstage-api-key`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: key }) });
+        document.getElementById("upstageKey").value = "";
+        document.getElementById("upstageKeyStatus").textContent = "저장 완료";
+        document.getElementById("upstageKeyStatus").style.color = "#4caf50";
+        loadApiKeyStatuses();
+      } catch (e) { alert("Upstage API 키 저장 실패: " + e.message); }
+    }
+
+    async function loadApiKeyStatuses() {
+      try {
+        const r = await fetch(`${backendUrl}/api/settings/api-key/status`);
+        const d = await r.json();
+        const el = document.getElementById("geminiKeyStatus");
+        if (d.configured) { el.textContent = "설정됨: " + d.masked; el.style.color = "#4caf50"; }
+        else { el.textContent = "미설정 (Gemini AI 기능 비활성)"; el.style.color = "#ef5350"; }
+      } catch {}
+      try {
+        const r = await fetch(`${backendUrl}/api/settings/upstage-api-key/status`);
+        const d = await r.json();
+        const el = document.getElementById("upstageKeyStatus");
+        if (d.configured) { el.textContent = "설정됨: " + d.masked; el.style.color = "#4caf50"; }
+        else { el.textContent = "미설정 (스캔 PDF에서 Upstage OCR 비활성)"; el.style.color = "#ef5350"; }
+      } catch {}
     }
 
     function addJob(id, path) {

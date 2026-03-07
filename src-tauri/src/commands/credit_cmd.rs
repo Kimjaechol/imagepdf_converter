@@ -32,6 +32,34 @@ pub async fn get_api_key_status() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
+// ─── Upstage API Key ───────────────────────────────────
+
+#[tauri::command]
+pub async fn set_upstage_api_key(api_key: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/settings/upstage-api-key", backend_url()))
+        .json(&serde_json::json!({ "api_key": api_key }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
+#[tauri::command]
+pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
+    let resp = reqwest::get(format!("{}/api/settings/upstage-api-key/status", backend_url()))
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
 // ─── Credits ────────────────────────────────────────────
 
 #[tauri::command]

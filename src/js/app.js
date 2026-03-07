@@ -142,8 +142,9 @@ function setupEventListeners() {
   // Settings apply
   setupSettingsListeners();
 
-  // API Key
+  // API Keys
   $("#btn-save-api-key")?.addEventListener("click", handleSaveApiKey);
+  $("#btn-save-upstage-api-key")?.addEventListener("click", handleSaveUpstageApiKey);
 
   // Credits
   $("#btn-purchase-credit")?.addEventListener("click", handlePurchaseCredit);
@@ -567,6 +568,20 @@ async function loadApiKeyStatus() {
   } catch {
     // Backend may not support this yet
   }
+
+  // Load Upstage API key status
+  try {
+    const status = await api.getUpstageApiKeyStatus();
+    const el = $("#upstage-api-key-status");
+    if (el) {
+      el.textContent = status.configured
+        ? `설정됨: ${status.masked}`
+        : "미설정 (스캔 PDF에서 Upstage OCR 비활성)";
+      el.style.color = status.configured ? "#4caf50" : "#f44336";
+    }
+  } catch {
+    // Backend may not support this yet
+  }
 }
 
 async function handleSaveApiKey() {
@@ -575,10 +590,23 @@ async function handleSaveApiKey() {
   try {
     await api.setApiKey(input.value.trim());
     input.value = "";
-    showSettingsStatus("API 키 저장 완료", "success");
+    showSettingsStatus("Gemini API 키 저장 완료", "success");
     loadApiKeyStatus();
   } catch (e) {
     showSettingsStatus(`API 키 저장 실패: ${e}`, "error");
+  }
+}
+
+async function handleSaveUpstageApiKey() {
+  const input = $("#set-upstage-api-key");
+  if (!input || !input.value.trim()) return;
+  try {
+    await api.setUpstageApiKey(input.value.trim());
+    input.value = "";
+    showSettingsStatus("Upstage API 키 저장 완료", "success");
+    loadApiKeyStatus();
+  } catch (e) {
+    showSettingsStatus(`Upstage API 키 저장 실패: ${e}`, "error");
   }
 }
 

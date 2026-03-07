@@ -195,6 +195,14 @@ export async function getApiKeyStatus() {
   return await invoke("get_api_key_status");
 }
 
+export async function setUpstageApiKey(apiKey) {
+  return await invoke("set_upstage_api_key", { apiKey: apiKey });
+}
+
+export async function getUpstageApiKeyStatus() {
+  return await invoke("get_upstage_api_key_status");
+}
+
 export async function getCredits(userId) {
   return await invoke("get_credits", { userId: userId });
 }
