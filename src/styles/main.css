@@ -286,6 +286,12 @@ body {
   outline: none;
   border-color: var(--accent);
 }
+.setting-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  padding: 4px 0;
+}
 
 /* ─── Right Panel ─── */
 .right-panel {
