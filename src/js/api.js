@@ -106,27 +106,27 @@ export async function convertBatch(folderPath, outputDir, formats, recursive) {
 // Routes to Rust-native (docx/hwpx/xlsx/pptx) or Python pipeline (pdf)
 export async function convertDocument(inputPath, outputDir, formats, translate, sourceLang, targetLang) {
   return await invoke("convert_document", {
-    input_path: inputPath,
-    output_dir: outputDir || null,
+    inputPath: inputPath,
+    outputDir: outputDir || null,
     formats: formats || ["html", "markdown"],
     translate: translate || false,
-    source_language: sourceLang || "",
-    target_language: targetLang || "ko",
+    sourceLanguage: sourceLang || "",
+    targetLanguage: targetLang || "ko",
   });
 }
 
 // Rust-native only (docx/hwpx/xlsx/pptx)
 export async function convertNativeDocument(inputPath, outputDir, formats) {
   return await invoke("convert_any_document", {
-    input_path: inputPath,
-    output_dir: outputDir || null,
+    inputPath: inputPath,
+    outputDir: outputDir || null,
     formats: formats || ["html", "markdown"],
   });
 }
 
 // ─── Job Management ───────────────────────────────────
 export async function getJobStatus(jobId) {
-  return await invoke("get_job_status", { job_id: jobId });
+  return await invoke("get_job_status", { jobId: jobId });
 }
 
 export async function listJobs() {
@@ -176,7 +176,7 @@ export async function moaToolManifest() {
 
 // ─── API Key & Credits ───────────────────────────────
 export async function setApiKey(apiKey) {
-  return await invoke("set_api_key", { api_key: apiKey });
+  return await invoke("set_api_key", { apiKey: apiKey });
 }
 
 export async function getApiKeyStatus() {
@@ -184,19 +184,19 @@ export async function getApiKeyStatus() {
 }
 
 export async function getCredits(userId) {
-  return await invoke("get_credits", { user_id: userId });
+  return await invoke("get_credits", { userId: userId });
 }
 
 export async function purchaseCredits(userId, amountUsd) {
-  return await invoke("purchase_credits", { user_id: userId, amount_usd: amountUsd });
+  return await invoke("purchase_credits", { userId: userId, amountUsd: amountUsd });
 }
 
 export async function estimateCost(numPages) {
-  return await invoke("estimate_cost", { num_pages: numPages });
+  return await invoke("estimate_cost", { numPages: numPages });
 }
 
 export async function getCreditHistory(userId) {
-  return await invoke("get_credit_history", { user_id: userId });
+  return await invoke("get_credit_history", { userId: userId });
 }
 
 // ─── WebSocket Progress ──────────────────────────────
