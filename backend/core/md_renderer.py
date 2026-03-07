@@ -83,6 +83,8 @@ class MarkdownRenderer:
 
         if btype == BlockType.HEADING:
             return self._render_heading(block)
+        elif btype == BlockType.SUBTITLE:
+            return f"**{block.text}**\n\n"
         elif btype == BlockType.PARAGRAPH:
             return self._render_paragraph(block)
         elif btype == BlockType.TABLE:

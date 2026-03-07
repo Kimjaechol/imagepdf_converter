@@ -86,6 +86,8 @@ class HtmlRenderer:
 
         if btype == BlockType.HEADING:
             return self._render_heading(block)
+        elif btype == BlockType.SUBTITLE:
+            return self._render_subtitle(block)
         elif btype == BlockType.PARAGRAPH:
             return self._render_paragraph(block)
         elif btype == BlockType.TABLE:
@@ -146,6 +148,13 @@ class HtmlRenderer:
         text = self._escape(block.text)
         text = self._add_footnote_refs(text, block)
         return f'<{tag}{style}{data}>{text}</{tag}>'
+
+    def _render_subtitle(self, block: LayoutBlock) -> str:
+        style = self._build_inline_style(block.style)
+        data = self._block_data_attrs(block)
+        text = self._escape(block.text)
+        text = self._add_footnote_refs(text, block)
+        return f'<p class="subtitle"{style}{data}><strong>{text}</strong></p>'
 
     def _render_paragraph(self, block: LayoutBlock) -> str:
         style = self._build_inline_style(block.style)

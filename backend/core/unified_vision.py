@@ -506,33 +506,40 @@ Each text block includes: bbox [x0,y0,x1,y1], font size (sz), BOLD, alignment.
 ## Page Layout Zone Classification
 Classify each block into one of 4 page zones:
 1. **Header zone**: blocks at the very top (y0 < 8% of page height), small font or edge-aligned → type "header" or "page_number"
-2. **Body zone**: main content area → paragraphs, headings, lists, tables
+2. **Body zone**: main content area → paragraphs, headings, subtitles, lists, tables
 3. **Footnote zone**: blocks below a horizontal separator in the bottom 25% → type "footnote"
 4. **Footer zone**: blocks at the very bottom (y1 > 88% of page height), small font or digit-only → type "footer" or "page_number"
 
 ## Multi-Column Detection (even without separator lines)
 Analyze bbox x-coordinates to detect multi-column layout:
 - If blocks cluster into distinct left/right groups with a consistent vertical gap → this is multi-column
-- Read LEFT column top-to-bottom FIRST, then RIGHT column top-to-bottom
+- Detect 2-column, 3-column, or N-column layouts from x-coordinate clustering
+- Read each column top-to-bottom in order: leftmost column FIRST → next → rightmost
 - Full-width blocks (spanning >70% page width) are read at their Y-position between columns
 
 ## Reading Order Rules
 1. Skip header/page_number at top
-2. Read body: if multi-column, left column first → right column
+2. Read body: if multi-column, left column first → next column → right column
 3. Read footnotes after all body content
 4. Skip footer/page_number at bottom
 
 ## Heading Classification
 - Large font (sz>16pt) + BOLD + center → h1 or h2
 - Large font (sz>14pt) + BOLD → h2 or h3
+- Slightly larger font + BOLD directly under a heading → subtitle
 - Korean: "제1장"/"제1편" = h2, "제1절"/"제1관" = h3, "제1조" = h4
 - No level skipping (h1→h3 invalid, must be h1→h2→h3)
 
+## Relation Extraction
+- If a caption-like block exists (e.g. "표 1.", "그림 2.", "Table 1"), set parent_id to the nearest table/figure block's id
+- For footnotes with markers (e.g. [1], *, †): set footnote_marker to the marker text
+
 ## Tasks
 1. **Correct OCR errors**: Korean Hanja (甲→갑), spelling, spacing (띄어쓰기).
-2. **Classify blocks**: heading, paragraph, list, footnote, header, footer, page_number.
+2. **Classify blocks**: heading, subtitle, paragraph, list, caption, footnote, header, footer, page_number.
 3. **Determine reading order**: Following the zone + column rules above.
-4. **Preserve bbox and styles**: Keep original bbox. Set font_size_relative from sz metadata.{translate_instruction}
+4. **Relation extraction**: Link captions to tables/figures, set footnote markers.
+5. **Preserve bbox and styles**: Keep original bbox. Set font_size_relative from sz metadata.{translate_instruction}
 
 {pages_section}
 
@@ -544,13 +551,15 @@ Return JSON:
       "blocks": [
         {{
           "id": "p0_b0",
-          "type": "heading|paragraph|footnote|header|footer|page_number|list",
+          "type": "heading|subtitle|paragraph|caption|footnote|header|footer|page_number|list",
           "text": "corrected text",
           "bbox": [x0, y0, x1, y1],
           "reading_order": 0,
           "heading_level": "h1|h2|h3|h4|h5|h6|none",
           "column_index": 0,
-          "style": {{"bold": false, "italic": false, "font_size_relative": "large|normal|small", "alignment": "left|center|right"}}
+          "footnote_marker": null,
+          "style": {{"bold": false, "italic": false, "font_size_relative": "large|normal|small", "alignment": "left|center|right"}},
+          "parent_id": null
         }}
       ]
     }}
@@ -583,7 +592,8 @@ Return ONLY valid JSON. No fences. Include ALL visible text."""
 
 ## Step 1: Element Detection
 Detect EVERY element on the page:
-- heading, paragraph, list, table, figure, equation, caption
+- heading (main title or section heading), subtitle (sub-heading directly under a heading)
+- paragraph, list, table, figure, equation, caption
 - header (running head at page top), footer (running foot at page bottom), page_number
 - footnote (below horizontal separator near page bottom)
 - box (text inside colored/bordered rectangles), balloon (callout/speech bubble)
@@ -599,9 +609,11 @@ Determine reading order as a HUMAN would read this document:
 
 **Multi-Column Detection (even without visible separator lines):**
 - Look for consistent vertical whitespace gaps that divide the page into columns
-- If the page has 2 or more columns: read the LEFT column top-to-bottom FIRST, then the NEXT column, etc.
+- Detect 2-column, 3-column, or N-column layouts from whitespace patterns
+- Read each column top-to-bottom in order: leftmost column FIRST → next column → ... → rightmost column
 - A column separator can be an explicit vertical line OR just a wide consistent gap (3+ character widths)
-- Full-width elements (spanning all columns) should be read at their Y-position
+- Full-width elements (spanning all columns): read at their Y-position in document flow
+- Cross-column tables/figures: read as a single unit at their Y-position; set column_index to the column where the table's LEFT edge starts
 
 **Within each column, read top-to-bottom:**
 - When you encounter a table, figure, equation, or graph: read it as a unit at its position
@@ -609,9 +621,10 @@ Determine reading order as a HUMAN would read this document:
 - Numbered items (①②③ etc.) are read sequentially within their column
 
 ## Step 3: Relation Extraction
-- Link each caption to its parent table/figure
-- Link footnote markers [1] in body text to footnote blocks
-- Identify which column each block belongs to
+- Link each caption to its parent table/figure by setting parent_id to the table/figure's id
+- For footnotes with markers (e.g. [1], *, †): set footnote_marker to the marker text
+- Identify which column each block belongs to (set column_index)
+- For cross-column elements: column_index = column where LEFT edge starts
 
 {translate_instruction}
 
@@ -625,12 +638,13 @@ Return JSON:
       "blocks": [
         {{
           "id": "p0_b0",
-          "type": "heading|paragraph|table|figure|caption|footnote|header|footer|page_number|list|equation|box",
+          "type": "heading|subtitle|paragraph|table|figure|caption|footnote|header|footer|page_number|list|equation|box",
           "text": "corrected text (fix OCR errors: Hanja 甲乙丙丁, Korean spelling/spacing 띄어쓰기)",
           "bbox": [x0, y0, x1, y1],
           "reading_order": 0,
           "heading_level": "h1|h2|h3|h4|h5|h6|none",
           "column_index": 0,
+          "footnote_marker": null,
           "style": {{"bold": false, "italic": false, "font_size_relative": "large|normal|small", "alignment": "left|center|right"}},
           "table": null,
           "parent_id": null
@@ -643,6 +657,7 @@ Return JSON:
           "reading_order": 3,
           "heading_level": "none",
           "column_index": 0,
+          "footnote_marker": null,
           "style": null,
           "table": {{
             "rows": 3, "cols": 4,
@@ -663,6 +678,7 @@ CRITICAL RULES:
 - Include ALL visible text on the page. Do NOT omit any content.
 - For tables, include EVERY cell with exact row/col position.
 - For captions, set parent_id to the ID of the related table/figure.
+- For footnotes, set footnote_marker to the marker (e.g. "1", "*", "†") if present.
 - Return ONLY valid JSON. No markdown fences."""
 
     # ------------------------------------------------------------------
@@ -792,6 +808,7 @@ CRITICAL RULES:
 
         type_map = {
             "heading": BlockType.HEADING,
+            "subtitle": BlockType.SUBTITLE,
             "paragraph": BlockType.PARAGRAPH,
             "table": BlockType.TABLE,
             "figure": BlockType.FIGURE,
@@ -871,6 +888,8 @@ CRITICAL RULES:
             role = "paragraph"
             if block_type == BlockType.HEADING:
                 role = "title" if heading_level == HeadingLevel.H1 else "section_heading"
+            elif block_type == BlockType.SUBTITLE:
+                role = "subtitle"
             elif block_type == BlockType.CAPTION:
                 role = "caption"
             elif block_type == BlockType.FOOTNOTE:
@@ -890,10 +909,15 @@ CRITICAL RULES:
                 reading_order=bj.get("reading_order", len(blocks)),
                 column_index=bj.get("column_index", 0),
             )
-            # Track parent_id for caption-table/figure linking
+            # Caption → parent table/figure linking
             parent_id = bj.get("parent_id")
             if parent_id:
                 block.linked_block_ids = [parent_id]
+                block.parent_block_id = parent_id
+            # Footnote marker (e.g. "1", "*", "†")
+            fn_marker = bj.get("footnote_marker")
+            if fn_marker:
+                block.footnote_marker = str(fn_marker)
             blocks.append(block)
 
         blocks.sort(key=lambda b: b.reading_order)
