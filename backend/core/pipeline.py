@@ -177,27 +177,41 @@ class Pipeline:
         )
 
     # ------------------------------------------------------------------
-    # Network-adaptive worker scaling
+    # Adaptive worker scaling
     # ------------------------------------------------------------------
 
-    _RAM_CAP = 30          # max workers limited by 8GB min RAM
-    _UPLOAD_PER_BATCH_MB = 15.0   # ~5 page images × ~3MB each
-    _TARGET_BATCH_SEC = 8.0       # aim to upload a batch within this time
+    _MEM_PER_WORKER_MB = 17   # ~5 page images + JSON buffer per worker
+    _SYSTEM_RESERVE_MB = 2048  # 2GB reserved for OS + other apps
+
+    @staticmethod
+    def _get_available_memory_mb() -> int:
+        """Read available memory from /proc/meminfo (Linux).
+
+        Falls back to 4GB assumption on non-Linux or read failure.
+        """
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        # Value is in kB
+                        return int(line.split()[1]) // 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        return 4096  # 4GB fallback
 
     def _measure_upload_bandwidth(
         self, sample_image_path: str, api_key: str,
-    ) -> float:
+    ) -> float | None:
         """Measure upload bandwidth (MB/s) by sending a test image to Gemini.
 
-        Returns measured upload speed in MB/s, or a conservative fallback.
+        Returns measured upload speed in MB/s, or None on failure.
+        Used for informational logging only — does NOT limit worker count.
         """
         import google.generativeai as genai
         from PIL import Image
 
-        fallback_mbps = 1.5  # conservative: ~12 Mbps effective upload
-
         if not sample_image_path or not api_key:
-            return fallback_mbps
+            return None
 
         try:
             img_size_bytes = os.path.getsize(sample_image_path)
@@ -207,31 +221,25 @@ class Pipeline:
             model = genai.GenerativeModel(self.cfg.gemini_model)
 
             start = time.time()
-            # Minimal prompt – just enough to measure upload round-trip
             model.generate_content(
                 [img, "Reply with only: OK"],
                 generation_config={"max_output_tokens": 8},
             )
             elapsed = time.time() - start
 
-            # Upload time ≈ total elapsed - ~0.3s model inference overhead
             upload_time = max(elapsed - 0.3, 0.1)
             speed_mbps = (img_size_bytes / (1024 * 1024)) / upload_time
 
             logger.info(
-                "Bandwidth probe: %.1fMB uploaded in %.2fs → %.1f MB/s "
-                "(raw elapsed=%.2fs)",
+                "Bandwidth probe: %.1fMB in %.2fs → %.1f MB/s (elapsed=%.2fs)",
                 img_size_bytes / (1024 * 1024), upload_time, speed_mbps,
                 elapsed,
             )
             return speed_mbps
 
         except Exception as exc:
-            logger.warning(
-                "Bandwidth measurement failed (%s), using fallback %.1f MB/s",
-                exc, fallback_mbps,
-            )
-            return fallback_mbps
+            logger.warning("Bandwidth measurement failed: %s", exc)
+            return None
 
     def _compute_optimal_workers(
         self,
@@ -239,36 +247,31 @@ class Pipeline:
         sample_image_path: str | None,
         api_key: str,
     ) -> int:
-        """Determine optimal worker count based on real network bandwidth.
+        """Determine optimal worker count based on available RAM.
 
-        Strategy:
-          1. Measure actual upload speed to Gemini (single image probe)
-          2. Calculate how many batches can upload concurrently within
-             the target time window
-          3. Cap by RAM limit and actual batch count
+        Network is NOT used to cap workers — slow networks cause blocking
+        I/O which naturally throttles concurrency. Workers simply wait
+        their turn, so allocating the maximum keeps the pipeline saturated
+        the moment bandwidth becomes available.
         """
         if num_batches <= 1:
             return 1
 
-        speed_mbps = self._measure_upload_bandwidth(
-            sample_image_path, api_key,
-        )
+        # Measure bandwidth for logging (does not cap workers)
+        bw = self._measure_upload_bandwidth(sample_image_path, api_key)
+        bw_str = f"{bw:.1f} MB/s" if bw is not None else "unknown"
 
-        # How many batches can we feed concurrently?
-        # Each batch needs ~15MB uploaded within ~8 seconds.
-        # Total bandwidth available = speed_mbps MB/s
-        # N workers each get speed_mbps/N → need 15/(speed/N) ≤ 8s
-        # → N ≤ speed_mbps * 8 / 15
-        network_cap = max(1, int(speed_mbps * self._TARGET_BATCH_SEC
-                                 / self._UPLOAD_PER_BATCH_MB))
+        # RAM-based cap: (available - 2GB reserve) / 17MB per worker
+        avail_mb = self._get_available_memory_mb()
+        usable_mb = max(avail_mb - self._SYSTEM_RESERVE_MB, 256)
+        ram_cap = max(1, usable_mb // self._MEM_PER_WORKER_MB)
 
-        effective = min(num_batches, network_cap, self._RAM_CAP)
-        effective = max(effective, 1)
+        effective = min(num_batches, ram_cap)
 
         logger.info(
-            "Worker scaling: bandwidth=%.1f MB/s → network_cap=%d, "
-            "ram_cap=%d, batches=%d → effective=%d",
-            speed_mbps, network_cap, self._RAM_CAP, num_batches, effective,
+            "Worker scaling: bandwidth=%s, avail_ram=%dMB, "
+            "usable=%dMB → ram_cap=%d, batches=%d → workers=%d",
+            bw_str, avail_mb, usable_mb, ram_cap, num_batches, effective,
         )
         return effective
 
