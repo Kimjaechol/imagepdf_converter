@@ -152,14 +152,9 @@ fn extract_attr<'a>(tag_buf: &'a str, attr_name: &str) -> Option<String> {
     None
 }
 
-/// Public wrapper for HTML → Markdown conversion (used by translation flow)
-pub fn html_to_markdown_public(html: &str) -> String {
-    html_to_markdown(html)
-}
-
-/// Simple HTML → Markdown converter
+/// HTML → Markdown converter (also used by translation flow in conversion.rs)
 #[allow(unused_assignments)]
-fn html_to_markdown(html: &str) -> String {
+pub fn html_to_markdown(html: &str) -> String {
     let mut md = String::new();
     let mut in_tag = false;
     let mut tag_buf = String::new();

@@ -126,7 +126,11 @@ function setupEventListeners() {
 
   // Settings tabs
   $("#tab-convert")?.addEventListener("click", () => switchTab("convert"));
-  $("#tab-settings")?.addEventListener("click", () => switchTab("settings"));
+  $("#tab-settings")?.addEventListener("click", () => {
+    switchTab("settings");
+    loadApiKeyStatus();
+    loadCreditBalance();
+  });
 
   // Settings apply
   setupSettingsListeners();
@@ -137,13 +141,6 @@ function setupEventListeners() {
   // Credits
   $("#btn-purchase-credit")?.addEventListener("click", handlePurchaseCredit);
   $("#btn-estimate-cost")?.addEventListener("click", handleEstimateCost);
-
-  // Load API key status and credits on settings tab
-  $("#tab-settings")?.addEventListener("click", () => {
-    switchTab("settings");
-    loadApiKeyStatus();
-    loadCreditBalance();
-  });
 
   // Backend restart
   $("#btn-restart-backend")?.addEventListener("click", async () => {

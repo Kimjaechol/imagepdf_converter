@@ -27,11 +27,15 @@ pub struct BatchRequest {
     pub recursive: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct JobStatus {
+    #[serde(default)]
     pub job_id: String,
+    #[serde(default)]
     pub status: String,
+    #[serde(default)]
     pub progress: f64,
+    #[serde(default)]
     pub message: String,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
@@ -116,6 +120,11 @@ pub async fn convert_document(
     source_language: Option<String>,
     target_language: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Validate input file exists
+    if !std::path::Path::new(&input_path).exists() {
+        return Err(format!("파일을 찾을 수 없습니다: {}", input_path));
+    }
+
     let ext = std::path::Path::new(&input_path)
         .extension()
         .and_then(|e| e.to_str())
@@ -163,7 +172,7 @@ pub async fn convert_document(
                     // Also produce translated markdown if requested
                     let want_md = output_formats.iter().any(|f| f == "markdown" || f == "md");
                     if want_md {
-                        let md = crate::document::converter::html_to_markdown_public(&translated);
+                        let md = crate::document::converter::html_to_markdown(&translated);
                         let md_path = std::path::Path::new(&out_dir)
                             .join(format!("{}_translated.md", stem));
                         tokio::fs::write(&md_path, &md)
