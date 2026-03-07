@@ -420,15 +420,12 @@ class Pipeline:
         all_results: list[PageResult] = []
         completed = 0
 
-        # P2P architecture: runs directly on user's local machine
-        # (typically 16-32GB RAM, gigabit internet, own API key).
-        # - Memory per worker: ~15MB (5 page images) → 100 workers = 1.5GB
-        # - Gemini Pay-as-you-go Tier 1: ~2,000 RPM (not a bottleneck)
-        # - Real bottleneck: Gemini concurrent request processing
-        # Cap at 50 to balance throughput vs API stability.
+        # P2P: runs on user's local machine (min 8GB, typical 16-32GB RAM).
+        # ~17MB/worker (5 page images + JSON buffer).
+        # 8GB RAM worst case: ~1.5GB available → 30 workers = ~510MB (safe).
         effective_workers = min(
             max(self.cfg.max_workers, len(all_batches)),
-            50,
+            30,
         )
         logger.info(
             "Parallel workers: %d (configured=%d, batches=%d)",
