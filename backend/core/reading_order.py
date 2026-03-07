@@ -342,6 +342,12 @@ class ReadingOrderRefiner:
         # 2. Detect columns in body blocks only
         num_cols = self._detect_columns(body_blocks, page_width, page_height)
 
+        # AI semantic verification (S180): verify gap-based columns make sense
+        if num_cols > 1 and self.mode in ("vlm", "hybrid"):
+            num_cols = self._verify_columns_with_ai(
+                body_blocks, num_cols, page_width, page_height,
+            )
+
         if num_cols > 1:
             col_boundaries = self._compute_column_boundaries(
                 body_blocks, num_cols, page_width, page_height,
@@ -618,6 +624,106 @@ class ReadingOrderRefiner:
             num_cols, [f"{g:.0f}" for g in merged],
         )
         return num_cols, merged
+
+    def _verify_columns_with_ai(
+        self,
+        blocks: list[LayoutBlock],
+        num_cols: int,
+        page_width: float,
+        page_height: float,
+    ) -> int:
+        """AI semantic verification (S180): ask Gemini whether reading
+        left-column-first then right-column makes semantic sense.
+
+        If the AI determines the content flows across (not down) the columns,
+        we fall back to single-column reading order.
+
+        Returns the verified number of columns (may reduce to 1).
+        """
+        try:
+            import google.generativeai as genai
+
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                return num_cols  # No API key, trust geometric detection
+
+            # Compute column boundaries to split blocks
+            _, gap_centers = self._detect_columns_by_projection(
+                blocks, page_width, page_height,
+            )
+            if not gap_centers:
+                return num_cols
+
+            # Sample text from each column (first ~5 blocks each)
+            gap_cx = gap_centers[0]  # Primary gap for 2-column
+            left_texts = []
+            right_texts = []
+            for b in sorted(blocks, key=lambda b: b.bbox.y0 if b.bbox else 0):
+                if not b.text or not b.bbox:
+                    continue
+                preview = b.text[:120].strip()
+                if not preview:
+                    continue
+                if b.bbox.center_x < gap_cx:
+                    if len(left_texts) < 5:
+                        left_texts.append(preview)
+                else:
+                    if len(right_texts) < 5:
+                        right_texts.append(preview)
+
+            if len(left_texts) < 2 or len(right_texts) < 2:
+                return num_cols  # Not enough text to verify
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(self.gemini_model)
+
+            prompt = f"""You are a document layout expert. I detected a potential {num_cols}-column layout.
+Below are text samples from each column, reading top-to-bottom within each column.
+
+LEFT COLUMN (read first):
+{chr(10).join(f'  {i+1}. "{t}"' for i, t in enumerate(left_texts))}
+
+RIGHT COLUMN (read second):
+{chr(10).join(f'  {i+1}. "{t}"' for i, t in enumerate(right_texts))}
+
+Question: Does reading the LEFT column completely (top-to-bottom) FIRST, then the RIGHT column completely (top-to-bottom) produce coherent, logically connected text?
+
+Answer with ONLY a JSON object:
+{{"is_multi_column": true/false, "reason": "brief explanation"}}
+
+Rules:
+- true = each column is independent content (e.g., newspaper columns, side-by-side sections)
+- true = left column continues into right column (standard multi-column document flow)
+- false = text flows LEFT-to-RIGHT across columns on same line (it's actually a single wide column or a table)
+- false = left and right are clearly the same sentence split in half"""
+
+            response = model.generate_content(prompt)
+            result_text = response.text.strip()
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
+
+            result = json.loads(result_text)
+            is_multi = result.get("is_multi_column", True)
+            reason = result.get("reason", "")
+
+            if not is_multi:
+                logger.info(
+                    "AI column verification: REJECTED %d-column layout. Reason: %s",
+                    num_cols, reason,
+                )
+                return 1
+            else:
+                logger.info(
+                    "AI column verification: CONFIRMED %d-column layout. Reason: %s",
+                    num_cols, reason,
+                )
+                return num_cols
+
+        except Exception as exc:
+            logger.warning("AI column verification failed: %s. Trusting geometric detection.", exc)
+            return num_cols
 
     def _detect_columns(
         self,
