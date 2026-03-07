@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PipelineConfig:
     pages_per_chunk: int = 10
-    max_workers: int = 4
+    max_workers: int = 10
     dpi: int = 300
     output_formats: list[str] = field(default_factory=lambda: ["html", "markdown"])
     # Pipeline mode: "standard" (multi-step) | "unified_vision" (single Gemini call)
@@ -420,13 +420,15 @@ class Pipeline:
         all_results: list[PageResult] = []
         completed = 0
 
-        # Dynamic worker count: scale with batch count but cap to avoid
-        # memory pressure (~15MB/worker for 5-page image batches) and
-        # API burst issues. Gemini Pay-as-you-go allows ~2000 RPM so
-        # the real limit is local resources, not API rate.
+        # P2P architecture: runs directly on user's local machine
+        # (typically 16-32GB RAM, gigabit internet, own API key).
+        # - Memory per worker: ~15MB (5 page images) → 100 workers = 1.5GB
+        # - Gemini Pay-as-you-go Tier 1: ~2,000 RPM (not a bottleneck)
+        # - Real bottleneck: Gemini concurrent request processing
+        # Cap at 50 to balance throughput vs API stability.
         effective_workers = min(
             max(self.cfg.max_workers, len(all_batches)),
-            20,
+            50,
         )
         logger.info(
             "Parallel workers: %d (configured=%d, batches=%d)",
