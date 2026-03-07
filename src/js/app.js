@@ -265,6 +265,19 @@ async function handleConvert() {
     return;
   }
 
+  // Warn if API key is not configured (OCR-only fallback will be used)
+  try {
+    const keyStatus = await api.getApiKeyStatus();
+    if (!keyStatus.configured) {
+      showStatus(
+        "⚠ API 키 미설정: AI 레이아웃 분석 없이 기본 OCR만 사용됩니다. 설정에서 API 키를 입력하세요.",
+        "warning",
+      );
+    }
+  } catch {
+    // Backend may not support this yet, continue anyway
+  }
+
   const btn = $("#btn-convert");
   if (btn) {
     btn.disabled = true;
