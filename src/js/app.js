@@ -474,8 +474,20 @@ function showResults(result) {
     .join("");
 
   fileList.querySelectorAll(".result-file").forEach((item) => {
-    item.addEventListener("click", () => {
-      api.openFile(item.dataset.path);
+    item.addEventListener("click", async () => {
+      const filePath = item.dataset.path;
+      const ext = filePath.split(".").pop().toLowerCase();
+      if (ext === "html" || ext === "htm") {
+        // Open HTML files in the built-in editor
+        try {
+          await api.openEditorWindow(filePath);
+        } catch (e) {
+          // Fallback to system open
+          api.openFile(filePath);
+        }
+      } else {
+        api.openFile(filePath);
+      }
     });
   });
 }
@@ -490,7 +502,12 @@ function switchTab(tab) {
 }
 
 async function handleOpenEditor() {
-  window.open("editor.html", "_blank", "width=1100,height=750");
+  try {
+    await api.openEditorWindow();
+  } catch (e) {
+    console.error("Failed to open editor:", e);
+    showStatus("에디터 열기 실패: " + e, "error");
+  }
 }
 
 function getFileIcon(ext) {

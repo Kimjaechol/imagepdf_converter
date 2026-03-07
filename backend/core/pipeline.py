@@ -510,7 +510,9 @@ class Pipeline:
             len(tag0_pages), len(tag1_pages), len(all_page_data),
         )
 
-        # 3. Gather digital text + run local OCR on TAG=0 pages without it
+        # 3. Gather digital text + run local OCR on pages without it
+        #    ALL pages (both TAG=0 and TAG=1) need OCR fallback so that
+        #    if Gemini fails, we still have text to display.
         self.progress_callback("Running local OCR on text-only pages", 0.15)
         ocr_blocks: dict[int, list[LayoutBlock]] = {}
         for pd in all_page_data:
@@ -518,14 +520,16 @@ class Pipeline:
             if digital_blocks:
                 ocr_blocks[pd["page_index"]] = digital_blocks
 
-        for pd in tag0_pages:
+        # Run local OCR on ALL pages that lack digital text (both TAG=0 and TAG=1)
+        # This ensures scanned TAG=1 pages have fallback text if Gemini fails.
+        for pd in all_page_data:
             page_idx = pd["page_index"]
             if page_idx not in ocr_blocks:
                 local_blocks = self.ocr.ocr_full_page(pd["image_path"], page_idx)
                 if local_blocks:
                     ocr_blocks[page_idx] = local_blocks
                     logger.debug(
-                        "Local OCR for TAG=0 page %d: %d blocks",
+                        "Local OCR for page %d: %d blocks",
                         page_idx, len(local_blocks),
                     )
 
@@ -700,6 +704,11 @@ class Pipeline:
                 fallback_blocks: list[LayoutBlock] = []
                 if miss_idx in ocr_blocks:
                     fallback_blocks = list(ocr_blocks[miss_idx])
+                    # Assign sequential reading_order to fallback blocks
+                    # (they may have reading_order=-1 from extraction)
+                    for fb_idx, fb_block in enumerate(fallback_blocks):
+                        if fb_block.reading_order < 0:
+                            fb_block.reading_order = fb_idx
                     logger.info(
                         "Fallback for page %d: using %d OCR blocks",
                         miss_idx, len(fallback_blocks),

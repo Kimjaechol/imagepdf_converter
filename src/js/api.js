@@ -70,11 +70,23 @@ export async function writeFile(path, content) {
 }
 
 export async function openFolder(path) {
-  await shellOpen(path);
+  try {
+    await invoke("open_path_native", { path });
+  } catch (e) {
+    // Fallback to shell:open
+    console.warn("open_path_native failed, trying shell:open:", e);
+    await shellOpen(path);
+  }
 }
 
 export async function openFile(path) {
-  await shellOpen(path);
+  try {
+    await invoke("open_path_native", { path });
+  } catch (e) {
+    // Fallback to shell:open
+    console.warn("open_path_native failed, trying shell:open:", e);
+    await shellOpen(path);
+  }
 }
 
 // ─── PDF Conversion (Python Backend) ──────────────────
@@ -234,6 +246,11 @@ export async function connectProgress(jobId, onMessage) {
     console.warn("Failed to connect WebSocket:", e);
     return null;
   }
+}
+
+// ─── Editor Window ────────────────────────────────────
+export async function openEditorWindow(filePath) {
+  return await invoke("open_editor_window", { filePath: filePath || null });
 }
 
 // ─── Utility ─────────────────────────────────────────

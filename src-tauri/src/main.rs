@@ -91,6 +91,8 @@ fn main() {
             commands::file_ops::get_backend_url,
             commands::file_ops::read_file_content,
             commands::file_ops::write_file_content,
+            commands::file_ops::open_path_native,
+            commands::file_ops::open_editor_window,
             // Conversion
             commands::conversion::convert_pdf,
             commands::conversion::convert_batch,
