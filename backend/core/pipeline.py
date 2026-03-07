@@ -177,6 +177,102 @@ class Pipeline:
         )
 
     # ------------------------------------------------------------------
+    # Network-adaptive worker scaling
+    # ------------------------------------------------------------------
+
+    _RAM_CAP = 30          # max workers limited by 8GB min RAM
+    _UPLOAD_PER_BATCH_MB = 15.0   # ~5 page images × ~3MB each
+    _TARGET_BATCH_SEC = 8.0       # aim to upload a batch within this time
+
+    def _measure_upload_bandwidth(
+        self, sample_image_path: str, api_key: str,
+    ) -> float:
+        """Measure upload bandwidth (MB/s) by sending a test image to Gemini.
+
+        Returns measured upload speed in MB/s, or a conservative fallback.
+        """
+        import google.generativeai as genai
+        from PIL import Image
+
+        fallback_mbps = 1.5  # conservative: ~12 Mbps effective upload
+
+        if not sample_image_path or not api_key:
+            return fallback_mbps
+
+        try:
+            img_size_bytes = os.path.getsize(sample_image_path)
+            img = Image.open(sample_image_path)
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(self.cfg.gemini_model)
+
+            start = time.time()
+            # Minimal prompt – just enough to measure upload round-trip
+            model.generate_content(
+                [img, "Reply with only: OK"],
+                generation_config={"max_output_tokens": 8},
+            )
+            elapsed = time.time() - start
+
+            # Upload time ≈ total elapsed - ~0.3s model inference overhead
+            upload_time = max(elapsed - 0.3, 0.1)
+            speed_mbps = (img_size_bytes / (1024 * 1024)) / upload_time
+
+            logger.info(
+                "Bandwidth probe: %.1fMB uploaded in %.2fs → %.1f MB/s "
+                "(raw elapsed=%.2fs)",
+                img_size_bytes / (1024 * 1024), upload_time, speed_mbps,
+                elapsed,
+            )
+            return speed_mbps
+
+        except Exception as exc:
+            logger.warning(
+                "Bandwidth measurement failed (%s), using fallback %.1f MB/s",
+                exc, fallback_mbps,
+            )
+            return fallback_mbps
+
+    def _compute_optimal_workers(
+        self,
+        num_batches: int,
+        sample_image_path: str | None,
+        api_key: str,
+    ) -> int:
+        """Determine optimal worker count based on real network bandwidth.
+
+        Strategy:
+          1. Measure actual upload speed to Gemini (single image probe)
+          2. Calculate how many batches can upload concurrently within
+             the target time window
+          3. Cap by RAM limit and actual batch count
+        """
+        if num_batches <= 1:
+            return 1
+
+        speed_mbps = self._measure_upload_bandwidth(
+            sample_image_path, api_key,
+        )
+
+        # How many batches can we feed concurrently?
+        # Each batch needs ~15MB uploaded within ~8 seconds.
+        # Total bandwidth available = speed_mbps MB/s
+        # N workers each get speed_mbps/N → need 15/(speed/N) ≤ 8s
+        # → N ≤ speed_mbps * 8 / 15
+        network_cap = max(1, int(speed_mbps * self._TARGET_BATCH_SEC
+                                 / self._UPLOAD_PER_BATCH_MB))
+
+        effective = min(num_batches, network_cap, self._RAM_CAP)
+        effective = max(effective, 1)
+
+        logger.info(
+            "Worker scaling: bandwidth=%.1f MB/s → network_cap=%d, "
+            "ram_cap=%d, batches=%d → effective=%d",
+            speed_mbps, network_cap, self._RAM_CAP, num_batches, effective,
+        )
+        return effective
+
+    # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
@@ -414,23 +510,20 @@ class Pipeline:
             )
 
         # 6. Process all batches in parallel via thread pool
-        self.progress_callback("Processing batches in parallel", 0.20)
+        self.progress_callback("Measuring network bandwidth", 0.19)
         api_key = os.environ.get("GEMINI_API_KEY", "")
 
         all_results: list[PageResult] = []
         completed = 0
 
-        # P2P: runs on user's local machine (min 8GB, typical 16-32GB RAM).
-        # ~17MB/worker (5 page images + JSON buffer).
-        # 8GB RAM worst case: ~1.5GB available → 30 workers = ~510MB (safe).
-        effective_workers = min(
-            max(self.cfg.max_workers, len(all_batches)),
-            30,
+        # Measure real upload bandwidth and compute optimal worker count.
+        sample_image = all_page_data[0]["image_path"] if all_page_data else None
+        effective_workers = self._compute_optimal_workers(
+            num_batches=len(all_batches),
+            sample_image_path=sample_image,
+            api_key=api_key,
         )
-        logger.info(
-            "Parallel workers: %d (configured=%d, batches=%d)",
-            effective_workers, self.cfg.max_workers, len(all_batches),
-        )
+        self.progress_callback("Processing batches in parallel", 0.20)
 
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = {}
