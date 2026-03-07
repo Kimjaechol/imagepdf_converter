@@ -420,7 +420,20 @@ class Pipeline:
         all_results: list[PageResult] = []
         completed = 0
 
-        with ThreadPoolExecutor(max_workers=self.cfg.max_workers) as executor:
+        # Dynamic worker count: scale with batch count but cap to avoid
+        # memory pressure (~15MB/worker for 5-page image batches) and
+        # API burst issues. Gemini Pay-as-you-go allows ~2000 RPM so
+        # the real limit is local resources, not API rate.
+        effective_workers = min(
+            max(self.cfg.max_workers, len(all_batches)),
+            20,
+        )
+        logger.info(
+            "Parallel workers: %d (configured=%d, batches=%d)",
+            effective_workers, self.cfg.max_workers, len(all_batches),
+        )
+
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = {}
             for batch_tag, batch_pages in all_batches:
                 if batch_tag == "tag0":
