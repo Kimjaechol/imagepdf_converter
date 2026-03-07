@@ -200,25 +200,40 @@ export async function getCreditHistory(userId) {
 }
 
 // ─── WebSocket Progress ──────────────────────────────
-export function connectProgress(jobId, onMessage) {
-  return new Promise((resolve) => {
-    getBackendUrl().then((baseUrl) => {
-      const wsUrl = baseUrl.replace("http://", "ws://") + `/ws/progress/${jobId}`;
-      const ws = new WebSocket(wsUrl);
+export async function connectProgress(jobId, onMessage) {
+  try {
+    const baseUrl = await getBackendUrl();
+    const wsUrl = baseUrl.replace("http://", "ws://") + `/ws/progress/${jobId}`;
+    const ws = new WebSocket(wsUrl);
 
+    return new Promise((resolve) => {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           onMessage(data);
+          // Auto-close on terminal states
+          if (data.status === "completed" || data.status === "failed") {
+            ws.close();
+          }
         } catch {
           onMessage({ message: event.data });
         }
       };
 
+      ws.onclose = () => {
+        onMessage({ _wsClose: true });
+      };
+
       ws.onopen = () => resolve(ws);
-      ws.onerror = () => resolve(null);
+      ws.onerror = (err) => {
+        console.warn("WebSocket connection failed for job", jobId, err);
+        resolve(null);
+      };
     });
-  });
+  } catch (e) {
+    console.warn("Failed to connect WebSocket:", e);
+    return null;
+  }
 }
 
 // ─── Utility ─────────────────────────────────────────

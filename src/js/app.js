@@ -22,6 +22,13 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+function cleanupWs() {
+  if (state.ws && state.ws.readyState !== WebSocket.CLOSED) {
+    state.ws.close();
+  }
+  state.ws = null;
+}
+
 // ─── Initialization ─────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
@@ -306,6 +313,7 @@ async function convertSingle() {
       state.currentJobId = jobId;
 
       const ws = await api.connectProgress(jobId, (data) => {
+        if (data._wsClose) return;
         if (data.progress !== undefined) {
           updateProgress(data.progress * 100, data.message || "처리 중...");
         }
@@ -313,9 +321,11 @@ async function convertSingle() {
           updateProgress(100, "변환 완료!");
           showStatus("변환 완료!", "success");
           pollJobResult(jobId);
+          cleanupWs();
         }
         if (data.status === "failed") {
           showStatus(`변환 실패: ${data.message}`, "error");
+          cleanupWs();
         }
       });
       state.ws = ws;
@@ -345,6 +355,7 @@ async function convertBatch() {
   state.currentJobId = jobId;
 
   const ws = await api.connectProgress(jobId, (data) => {
+    if (data._wsClose) return;
     if (data.progress !== undefined) {
       updateProgress(data.progress * 100, data.message || "처리 중...");
     }
@@ -352,6 +363,11 @@ async function convertBatch() {
       updateProgress(100, "배치 변환 완료!");
       showStatus("배치 변환 완료!", "success");
       pollJobResult(jobId);
+      cleanupWs();
+    }
+    if (data.status === "failed") {
+      showStatus(`배치 변환 실패: ${data.message}`, "error");
+      cleanupWs();
     }
   });
   state.ws = ws;
