@@ -45,6 +45,7 @@ pub async fn convert_file(
         "hwpx" => super::hwpx::convert_to_html(input_path).await?,
         "xlsx" => super::xlsx::convert_to_html(input_path).await?,
         "pptx" => super::pptx::convert_to_html(input_path).await?,
+        "pdf" => super::pdf::convert_to_html(input_path).await?,
         _ => return Err(format!("Unsupported format: .{}", ext)),
     };
 

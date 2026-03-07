@@ -27,6 +27,7 @@ portpicker = "0.1"
 regex = "1"
 html-escape = "0.2"
 dirs-next = "2"
+lopdf = "0.34"
 
 [features]
 default = ["custom-protocol"]

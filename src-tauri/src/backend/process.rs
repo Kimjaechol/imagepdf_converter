@@ -5,6 +5,9 @@ use tauri::{AppHandle, Manager};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 static BACKEND_PROCESS: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static BACKEND_PORT: OnceLock<u16> = OnceLock::new();
 
@@ -96,8 +99,8 @@ pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
     );
     tracing::info!("Resource dir: {:?}", resolve_resource_dir(app));
 
-    let child = Command::new(&python)
-        .args([
+    let mut cmd = Command::new(&python);
+    cmd.args([
             "-m", "uvicorn", "backend.server:app",
             "--host", "127.0.0.1",
             "--port", &port.to_string(),
@@ -108,7 +111,16 @@ pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+
+    // Hide the console window on Windows
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn Python backend: {}", e))?;
 

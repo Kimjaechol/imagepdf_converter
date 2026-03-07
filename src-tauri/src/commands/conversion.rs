@@ -180,17 +180,40 @@ pub async fn convert_document(
             serde_json::to_value(result)
                 .map_err(|e| format!("Failed to serialize result: {}", e))
         }
-        // PDF → Python backend
+        // PDF → try Python backend first, fall back to Rust-native text extraction
         "pdf" => {
-            convert_pdf(ConvertRequest {
-                input_path,
-                output_dir,
-                output_formats: formats,
-                translate: do_translate,
-                source_language: src_lang,
-                target_language: tgt_lang,
-            })
-            .await
+            // Check if Python backend is healthy
+            let backend_healthy = crate::backend::process::health_check().await;
+
+            if backend_healthy {
+                convert_pdf(ConvertRequest {
+                    input_path,
+                    output_dir,
+                    output_formats: formats,
+                    translate: do_translate,
+                    source_language: src_lang,
+                    target_language: tgt_lang,
+                })
+                .await
+            } else {
+                // Fallback: Rust-native basic PDF text extraction
+                tracing::info!("Python backend unavailable, using Rust-native PDF converter");
+                let output_formats = formats.unwrap_or_else(|| vec!["html".to_string(), "markdown".to_string()]);
+                let out_dir = output_dir.unwrap_or_else(|| {
+                    std::path::Path::new(&input_path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .to_string_lossy()
+                        .to_string()
+                });
+
+                let result =
+                    crate::document::converter::convert_file(&input_path, &out_dir, &output_formats)
+                        .await?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            }
         }
         _ => Err(format!("Unsupported file format: .{}", ext)),
     }
