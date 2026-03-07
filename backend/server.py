@@ -93,6 +93,14 @@ class SetApiKeyRequest(BaseModel):
     api_key: str
 
 
+class SetUpstageApiKeyRequest(BaseModel):
+    api_key: str
+
+
+class SetPipelineModeRequest(BaseModel):
+    mode: str  # "standard" | "unified_vision" | "upstage_hybrid"
+
+
 class TranslateHtmlRequest(BaseModel):
     html: str
     source_language: str = ""
@@ -158,12 +166,15 @@ async def get_config():
         "max_workers": cfg.max_workers,
         "dpi": cfg.dpi,
         "output_formats": cfg.output_formats,
+        "pipeline_mode": cfg.pipeline_mode,
         "layout_engine": cfg.layout_engine,
         "ocr_engine": cfg.ocr_engine,
         "reading_order_mode": cfg.reading_order_mode,
         "heading_mode": cfg.heading_mode,
         "correction_mode": cfg.correction_mode,
         "correction_aggressiveness": cfg.correction_aggressiveness,
+        "upstage_mode": cfg.upstage_mode,
+        "gemini_visual_batch_size": cfg.gemini_visual_batch_size,
     }
 
 
@@ -301,6 +312,108 @@ async def get_api_key_status():
     return {
         "configured": bool(key),
         "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Upstage API Key Management
+# ---------------------------------------------------------------------------
+
+def _upstage_api_key_file() -> Path:
+    """Return the path to the persisted Upstage API key file."""
+    p = Path("data")
+    p.mkdir(parents=True, exist_ok=True)
+    return p / "upstage_api_key.txt"
+
+
+def _load_persisted_upstage_api_key() -> None:
+    """Load the Upstage API key from disk into os.environ on startup."""
+    f = _upstage_api_key_file()
+    if f.exists():
+        key = f.read_text(encoding="utf-8").strip()
+        if key:
+            os.environ["UPSTAGE_API_KEY"] = key
+            logger.info("Loaded persisted Upstage API key (%s...)", key[:4])
+
+
+_load_persisted_upstage_api_key()
+
+
+@app.post("/api/settings/upstage-api-key")
+async def set_upstage_api_key(req: SetUpstageApiKeyRequest):
+    """Set the Upstage API key. Persisted to disk."""
+    os.environ["UPSTAGE_API_KEY"] = req.api_key
+    _upstage_api_key_file().write_text(req.api_key, encoding="utf-8")
+    logger.info("Upstage API key saved and persisted")
+    return {"status": "ok", "message": "Upstage API key configured"}
+
+
+@app.get("/api/settings/upstage-api-key/status")
+async def get_upstage_api_key_status():
+    """Check if an Upstage API key is configured."""
+    key = os.environ.get("UPSTAGE_API_KEY", "")
+    return {
+        "configured": bool(key),
+        "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Mode Management
+# ---------------------------------------------------------------------------
+
+@app.post("/api/settings/pipeline-mode")
+async def set_pipeline_mode(req: SetPipelineModeRequest):
+    """Set the conversion pipeline mode.
+
+    Available modes:
+    - "standard": Multi-step local pipeline (layout→OCR→table→heading→correction)
+    - "unified_vision": Single Gemini call with TAG=0/1 optimization (default)
+    - "upstage_hybrid": Upstage Document Parse + Gemini visual comparison (highest accuracy)
+    """
+    valid_modes = {"standard", "unified_vision", "upstage_hybrid"}
+    if req.mode not in valid_modes:
+        raise HTTPException(400, f"Invalid mode. Must be one of: {valid_modes}")
+
+    cfg = _get_config()
+    cfg.pipeline_mode = req.mode
+    logger.info("Pipeline mode set to: %s", req.mode)
+    return {"status": "ok", "mode": req.mode}
+
+
+@app.get("/api/settings/pipeline-mode")
+async def get_pipeline_mode():
+    """Get the current pipeline mode and available modes."""
+    cfg = _get_config()
+    upstage_key = os.environ.get("UPSTAGE_API_KEY", "")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    return {
+        "current_mode": cfg.pipeline_mode,
+        "available_modes": [
+            {
+                "id": "standard",
+                "name": "Standard (Local)",
+                "description": "Multi-step local pipeline. No API key needed.",
+                "available": True,
+            },
+            {
+                "id": "unified_vision",
+                "name": "Gemini Vision",
+                "description": "Single Gemini call with smart batching. Requires Gemini API key.",
+                "available": bool(gemini_key),
+            },
+            {
+                "id": "upstage_hybrid",
+                "name": "Upstage + Gemini Hybrid (Highest Accuracy)",
+                "description": (
+                    "Upstage Document Parse for OCR/layout + Gemini for visual comparison. "
+                    "Requires both Upstage and Gemini API keys for scanned PDFs. "
+                    "Digital PDFs need only Gemini API key."
+                ),
+                "available": bool(gemini_key),
+                "upstage_configured": bool(upstage_key),
+            },
+        ],
     }
 
 
