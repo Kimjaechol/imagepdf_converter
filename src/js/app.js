@@ -34,6 +34,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
   await checkBackendHealth();
   setInterval(checkBackendHealth, 10000);
+  // Restore auth state
+  const token = api.getAuthToken();
+  if (token) {
+    try {
+      await api.setAuthToken(token);
+    } catch { /* ok */ }
+  }
+  updateAuthUI();
 });
 
 async function checkBackendHealth() {
@@ -135,16 +143,26 @@ function setupEventListeners() {
   $("#tab-convert")?.addEventListener("click", () => switchTab("convert"));
   $("#tab-settings")?.addEventListener("click", () => {
     switchTab("settings");
-    loadApiKeyStatus();
-    loadCreditBalance();
+    updateAuthUI();
   });
 
   // Settings apply
   setupSettingsListeners();
 
-  // API Keys
-  $("#btn-save-api-key")?.addEventListener("click", handleSaveApiKey);
-  $("#btn-save-upstage-api-key")?.addEventListener("click", handleSaveUpstageApiKey);
+  // Auth
+  $("#btn-login")?.addEventListener("click", handleLogin);
+  $("#btn-register")?.addEventListener("click", () => {
+    // Show display name field on first click, then register
+    const nameInput = $("#auth-display-name");
+    const nameLabel = $("#auth-name-label");
+    if (nameInput && nameInput.style.display === "none") {
+      nameInput.style.display = "block";
+      if (nameLabel) nameLabel.style.display = "block";
+      return;
+    }
+    handleRegister();
+  });
+  $("#btn-logout")?.addEventListener("click", handleLogout);
 
   // Credits
   $("#btn-purchase-credit")?.addEventListener("click", handlePurchaseCredit);
@@ -554,86 +572,122 @@ function showSettingsStatus(message, type) {
   }
 }
 
-// ─── API Key Management ─────────────────────────────────
-async function loadApiKeyStatus() {
-  try {
-    const status = await api.getApiKeyStatus();
-    const el = $("#api-key-status");
-    if (el) {
-      el.textContent = status.configured
-        ? `설정됨: ${status.masked}`
-        : "미설정 (Gemini AI 기능 비활성)";
-      el.style.color = status.configured ? "#4caf50" : "#f44336";
-    }
-  } catch {
-    // Backend may not support this yet
-  }
+// ─── Auth Management ────────────────────────────────────
+function updateAuthUI() {
+  const userInfo = api.getUserInfo();
+  const authSection = $("#auth-section");
+  const creditSection = $("#credit-section");
+  const userInfoEl = $("#user-info");
 
-  // Load Upstage API key status
-  try {
-    const status = await api.getUpstageApiKeyStatus();
-    const el = $("#upstage-api-key-status");
-    if (el) {
-      el.textContent = status.configured
-        ? `설정됨: ${status.masked}`
-        : "미설정 (스캔 PDF에서 Upstage OCR 비활성)";
-      el.style.color = status.configured ? "#4caf50" : "#f44336";
+  if (userInfo && api.getAuthToken()) {
+    // Logged in
+    if (authSection) authSection.style.display = "none";
+    if (creditSection) creditSection.style.display = "block";
+    if (userInfoEl) {
+      userInfoEl.style.display = "flex";
+      const nameEl = $("#user-display-name");
+      if (nameEl) nameEl.textContent = userInfo.display_name || userInfo.email;
     }
-  } catch {
-    // Backend may not support this yet
+    loadCreditBalance();
+  } else {
+    // Not logged in
+    if (authSection) authSection.style.display = "block";
+    if (creditSection) creditSection.style.display = "none";
+    if (userInfoEl) userInfoEl.style.display = "none";
   }
 }
 
-async function handleSaveApiKey() {
-  const input = $("#set-api-key");
-  if (!input || !input.value.trim()) return;
+async function handleLogin() {
+  const email = $("#auth-email")?.value?.trim();
+  const password = $("#auth-password")?.value;
+  if (!email || !password) {
+    showAuthStatus("이메일과 비밀번호를 입력하세요", "error");
+    return;
+  }
   try {
-    await api.setApiKey(input.value.trim());
-    input.value = "";
-    showSettingsStatus("Gemini API 키 저장 완료", "success");
-    loadApiKeyStatus();
+    const result = await api.login(email, password);
+    await api.setAuthToken(result.token);
+    api.setUserInfo(result);
+    showAuthStatus("로그인 성공!", "success");
+    updateAuthUI();
   } catch (e) {
-    showSettingsStatus(`API 키 저장 실패: ${e}`, "error");
+    showAuthStatus(`로그인 실패: ${e}`, "error");
   }
 }
 
-async function handleSaveUpstageApiKey() {
-  const input = $("#set-upstage-api-key");
-  if (!input || !input.value.trim()) return;
-  try {
-    await api.setUpstageApiKey(input.value.trim());
-    input.value = "";
-    showSettingsStatus("Upstage API 키 저장 완료", "success");
-    loadApiKeyStatus();
-  } catch (e) {
-    showSettingsStatus(`Upstage API 키 저장 실패: ${e}`, "error");
+async function handleRegister() {
+  const email = $("#auth-email")?.value?.trim();
+  const password = $("#auth-password")?.value;
+  const displayName = $("#auth-display-name")?.value?.trim();
+  if (!email || !password) {
+    showAuthStatus("이메일과 비밀번호를 입력하세요", "error");
+    return;
   }
+  if (password.length < 6) {
+    showAuthStatus("비밀번호는 6자 이상이어야 합니다", "error");
+    return;
+  }
+  try {
+    const result = await api.register(email, password, displayName);
+    await api.setAuthToken(result.token);
+    api.setUserInfo(result);
+    showAuthStatus("회원가입 성공!", "success");
+    updateAuthUI();
+  } catch (e) {
+    showAuthStatus(`회원가입 실패: ${e}`, "error");
+  }
+}
+
+function handleLogout() {
+  api.clearAuth();
+  updateAuthUI();
+  showSettingsStatus("로그아웃 완료", "info");
+}
+
+function showAuthStatus(message, type) {
+  const el = $("#auth-status");
+  if (!el) return;
+  el.textContent = message;
+  el.style.color = type === "error" ? "#f44336" : "#4caf50";
 }
 
 // ─── Credit Management ──────────────────────────────────
 async function loadCreditBalance() {
   try {
-    const userId = $("#credit-user-id")?.value || "default";
-    const info = await api.getCredits(userId);
+    const info = await api.getCredits();
     const el = $("#credit-balance");
     if (el) {
       el.textContent = `$${info.balance_usd.toFixed(4)}`;
       el.style.color = info.balance_usd > 0 ? "#4caf50" : "#f44336";
     }
+    // Update header badge
+    const badge = $("#user-balance-badge");
+    if (badge) {
+      badge.textContent = `$${info.balance_usd.toFixed(2)}`;
+    }
   } catch {
-    // Backend may not support this yet
+    // Not logged in or backend not ready
   }
 }
 
 async function handlePurchaseCredit() {
-  const userId = $("#credit-user-id")?.value || "default";
   const amount = parseFloat($("#credit-amount")?.value || "0");
   if (amount <= 0) {
     showSettingsStatus("충전 금액을 입력해주세요", "warning");
     return;
   }
   try {
-    const result = await api.purchaseCredits(userId, amount);
+    // Try Stripe checkout first
+    const checkout = await api.createCheckout(amount);
+    if (checkout.checkout_url) {
+      window.open(checkout.checkout_url, "_blank");
+      return;
+    }
+  } catch {
+    // Stripe not configured, use manual top-up
+  }
+  try {
+    const result = await api.purchaseCredits(amount);
     showSettingsStatus(`$${amount.toFixed(2)} 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)}`, "success");
     loadCreditBalance();
   } catch (e) {
@@ -643,16 +697,23 @@ async function handlePurchaseCredit() {
 
 async function handleEstimateCost() {
   const pages = parseInt($("#estimate-pages")?.value || "0", 10);
+  const docType = $("#estimate-doc-type")?.value || "image_pdf";
   if (pages <= 0) return;
   try {
-    const est = await api.estimateCost(pages);
+    const est = await api.estimateCost(pages, docType);
     const el = $("#cost-estimate-result");
     if (el) {
-      el.innerHTML = `
-        ${pages}페이지 추산:<br>
-        API 원가: $${est.raw_cost_usd.toFixed(4)}<br>
-        이용자 부과액 (${est.markup}배): <strong>$${est.charged_usd.toFixed(4)}</strong>
-      `;
+      const typeLabel = docType === "image_pdf" ? "이미지 PDF"
+        : docType === "digital_pdf" ? "디지털 PDF" : "기타 문서";
+      if (est.charged_usd === 0) {
+        el.innerHTML = `${typeLabel} ${pages}페이지: <strong>무료</strong>`;
+      } else {
+        el.innerHTML = `
+          ${typeLabel} ${pages}페이지:<br>
+          단가: $${est.per_page_usd} / 페이지<br>
+          합계: <strong>$${est.charged_usd.toFixed(4)}</strong>
+        `;
+      }
     }
   } catch (e) {
     showSettingsStatus(`추산 실패: ${e}`, "error");

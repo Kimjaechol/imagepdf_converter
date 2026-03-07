@@ -1,17 +1,20 @@
-"""Credit system – tracks API token usage and manages user credit balances.
+"""Credit system – tracks per-page usage and manages user credit balances.
 
 Business model:
-- Operator sets their Gemini API key (server-side env or config).
+- Operator sets their API keys (Gemini, Upstage) server-side.
 - Users pre-purchase credits (denominated in USD) within the app.
-- Each Gemini API call's token usage is metered.  The user's balance is
-  debited at ``cost_markup`` times the raw API cost (default 2.2x).
+- Each conversion debits the user's balance at a fixed per-page rate.
+
+Per-page pricing (user-facing):
+  - Image PDF (scanned): $0.02 / page
+  - Digital PDF (text-based): $0.005 / page
+  - Other documents (DOCX, HWPX, XLSX, PPTX): free
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -19,25 +22,10 @@ from threading import Lock
 
 logger = logging.getLogger(__name__)
 
-# Gemini 3.1 Flash-Lite official API pricing (USD per 1 million tokens)
-_DEFAULT_INPUT_COST = 0.50
-_DEFAULT_OUTPUT_COST = 3.00
-_DEFAULT_MARKUP = 2.2
-
-
-@dataclass
-class TokenUsage:
-    """Token counts for a single API call."""
-    input_tokens: int = 0
-    output_tokens: int = 0
-    timestamp: float = 0.0
-
-    @property
-    def raw_cost_usd(self) -> float:
-        return (
-            self.input_tokens / 1_000_000 * _DEFAULT_INPUT_COST
-            + self.output_tokens / 1_000_000 * _DEFAULT_OUTPUT_COST
-        )
+# Fixed per-page pricing for users (USD)
+PRICE_IMAGE_PDF_PER_PAGE = 0.02
+PRICE_DIGITAL_PDF_PER_PAGE = 0.005
+PRICE_OTHER_PER_PAGE = 0.0
 
 
 @dataclass
@@ -50,20 +38,11 @@ class UserAccount:
 
 
 class CreditService:
-    """Manages user credit balances and API cost metering."""
+    """Manages user credit balances and per-page cost metering."""
 
-    def __init__(
-        self,
-        data_dir: str = "data",
-        cost_markup: float = _DEFAULT_MARKUP,
-        input_cost_per_million: float = _DEFAULT_INPUT_COST,
-        output_cost_per_million: float = _DEFAULT_OUTPUT_COST,
-    ):
+    def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.cost_markup = cost_markup
-        self.input_cost = input_cost_per_million
-        self.output_cost = output_cost_per_million
         self._lock = Lock()
         self._accounts: dict[str, UserAccount] = {}
         self._load_accounts()
@@ -100,38 +79,45 @@ class CreditService:
             return acct.balance_usd
 
     # ------------------------------------------------------------------
+    # Per-page pricing helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def price_per_page(doc_type: str) -> float:
+        """Return the per-page price for a given document type.
+
+        doc_type: "image_pdf" | "digital_pdf" | "other"
+        """
+        if doc_type == "image_pdf":
+            return PRICE_IMAGE_PDF_PER_PAGE
+        elif doc_type == "digital_pdf":
+            return PRICE_DIGITAL_PDF_PER_PAGE
+        return PRICE_OTHER_PER_PAGE
+
+    # ------------------------------------------------------------------
     # Usage metering
     # ------------------------------------------------------------------
 
-    def check_sufficient_balance(self, user_id: str, estimated_pages: int) -> bool:
-        """Check if user has enough credits for an estimated conversion."""
-        # Blended estimate: ~70% TAG=0 (~200 input) + ~30% TAG=1 (~1,650 input)
-        # Average: ~635 input tokens, ~900 output tokens per page
-        estimated_input = estimated_pages * 635
-        estimated_output = estimated_pages * 900
-        raw_cost = (
-            estimated_input / 1_000_000 * self.input_cost
-            + estimated_output / 1_000_000 * self.output_cost
-        )
-        charged = raw_cost * self.cost_markup
-        return self.get_balance(user_id) >= charged
+    def check_sufficient_balance(
+        self, user_id: str, num_pages: int, doc_type: str = "image_pdf"
+    ) -> bool:
+        """Check if user has enough credits for a conversion."""
+        cost = num_pages * self.price_per_page(doc_type)
+        return self.get_balance(user_id) >= cost
 
     def debit_usage(
         self,
         user_id: str,
-        input_tokens: int,
-        output_tokens: int,
+        num_pages: int,
+        doc_type: str = "image_pdf",
         description: str = "",
     ) -> dict:
-        """Debit a user's balance based on actual token usage.
+        """Debit a user's balance based on page count and document type.
 
-        Returns a dict with cost details.
+        Returns a dict with cost details (no raw API cost exposed).
         """
-        raw_cost = (
-            input_tokens / 1_000_000 * self.input_cost
-            + output_tokens / 1_000_000 * self.output_cost
-        )
-        charged = raw_cost * self.cost_markup
+        per_page = self.price_per_page(doc_type)
+        charged = num_pages * per_page
 
         with self._lock:
             acct = self._accounts.setdefault(
@@ -141,11 +127,10 @@ class CreditService:
             acct.total_consumed_usd += charged
             record = {
                 "type": "usage",
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "raw_cost_usd": round(raw_cost, 6),
+                "num_pages": num_pages,
+                "doc_type": doc_type,
+                "per_page_usd": per_page,
                 "charged_usd": round(charged, 6),
-                "markup": self.cost_markup,
                 "balance_after": round(acct.balance_usd, 6),
                 "description": description,
                 "timestamp": time.time(),
@@ -154,39 +139,15 @@ class CreditService:
             self._persist()
             return record
 
-    def estimate_cost(self, num_pages: int, translate: bool = False) -> dict:
-        """Estimate the user-facing cost for converting *num_pages* pages.
-
-        When translate=True, output tokens increase because the AI must
-        produce translated text. Input tokens are roughly the same since
-        translation instructions are embedded in the existing prompt
-        (minimal overhead). The main cost increase is ~1.3x output tokens.
-        """
-        # TAG=0 (text-only, ~70%): local OCR → text-only Gemini (~200 input, ~600 output)
-        # TAG=1 (complex, ~30%): image → Gemini vision (~1,650 input, ~1,500 output)
-        # Blended average per page: ~635 input, ~870 output
-        estimated_input = num_pages * 635
-        estimated_output = num_pages * 870
-
-        if translate:
-            # Translation adds ~30% more output tokens (translated text is
-            # roughly same length, but prompt overhead adds some input tokens)
-            estimated_input = int(estimated_input * 1.05)   # +5% input (prompt)
-            estimated_output = int(estimated_output * 1.3)  # +30% output (translated text)
-
-        raw_cost = (
-            estimated_input / 1_000_000 * self.input_cost
-            + estimated_output / 1_000_000 * self.output_cost
-        )
-        charged = raw_cost * self.cost_markup
+    def estimate_cost(self, num_pages: int, doc_type: str = "image_pdf") -> dict:
+        """Estimate the user-facing cost for converting *num_pages* pages."""
+        per_page = self.price_per_page(doc_type)
+        charged = num_pages * per_page
         return {
             "num_pages": num_pages,
-            "translate": translate,
-            "estimated_input_tokens": estimated_input,
-            "estimated_output_tokens": estimated_output,
-            "raw_cost_usd": round(raw_cost, 6),
+            "doc_type": doc_type,
+            "per_page_usd": per_page,
             "charged_usd": round(charged, 6),
-            "markup": self.cost_markup,
         }
 
     # ------------------------------------------------------------------

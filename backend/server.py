@@ -9,13 +9,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.core.pipeline import Pipeline, PipelineConfig
 from backend.models.schema import PdfJob
 from backend.services.credit_service import CreditService
+from backend.services.auth_service import AuthService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ _config: PipelineConfig | None = None
 _jobs: dict[str, dict[str, Any]] = {}  # job_id -> status
 _websockets: dict[str, WebSocket] = {}
 _credit_service: CreditService | None = None
+_auth_service: AuthService | None = None
 
 
 def _get_credit_service() -> CreditService:
@@ -45,6 +47,25 @@ def _get_credit_service() -> CreditService:
     if _credit_service is None:
         _credit_service = CreditService(data_dir="data")
     return _credit_service
+
+
+def _get_auth_service() -> AuthService:
+    global _auth_service
+    if _auth_service is None:
+        _auth_service = AuthService(data_dir="data")
+    return _auth_service
+
+
+async def get_current_user(authorization: str = Header(default="")) -> dict:
+    """Extract and verify the user from the Authorization header."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Missing or invalid authorization header")
+    token = authorization[7:]
+    auth = _get_auth_service()
+    payload = auth.verify_token(token)
+    if not payload:
+        raise HTTPException(401, "Invalid or expired token")
+    return payload
 
 
 def _get_config() -> PipelineConfig:
@@ -70,6 +91,8 @@ class ConvertRequest(BaseModel):
     translate: bool = False
     source_language: str = ""      # empty = auto-detect (e.g. "ja", "en", "zh")
     target_language: str = "ko"    # e.g. "ko", "en", "ja"
+    # Auth: user_id injected by the endpoint handler
+    user_id: str = ""
 
 
 class BatchConvertRequest(BaseModel):
@@ -107,14 +130,28 @@ class TranslateHtmlRequest(BaseModel):
     target_language: str = "ko"
 
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str = ""
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
 class PurchaseCreditsRequest(BaseModel):
-    user_id: str
+    amount_usd: float
+
+
+class CreateCheckoutRequest(BaseModel):
     amount_usd: float
 
 
 class EstimateCostRequest(BaseModel):
     num_pages: int
-    translate: bool = False
+    doc_type: str = "image_pdf"  # "image_pdf" | "digital_pdf" | "other"
 
 
 class JobStatus(BaseModel):
@@ -188,8 +225,10 @@ async def update_config(update: ConfigUpdate):
 
 
 @app.post("/api/convert", response_model=JobStatus)
-async def convert_single(req: ConvertRequest):
-    """Start a single PDF conversion job."""
+async def convert_single(req: ConvertRequest, user: dict = Depends(get_current_user)):
+    """Start a single PDF conversion job (authenticated, credit-checked)."""
+    req.user_id = user["user_id"]
+
     job_id = uuid.uuid4().hex[:12]
     _jobs[job_id] = {
         "status": "pending",
@@ -590,14 +629,51 @@ HTML to translate:
 
 
 # ---------------------------------------------------------------------------
-# Credit System
+# Authentication
 # ---------------------------------------------------------------------------
 
-@app.get("/api/credits/{user_id}")
-async def get_credits(user_id: str):
-    """Get a user's credit balance."""
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    """Register a new user account."""
+    auth = _get_auth_service()
+    try:
+        result = auth.register(req.email, req.password, req.display_name)
+        # Auto-create credit account
+        _get_credit_service().get_or_create_account(result["user_id"])
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    """Log in and get a token."""
+    auth = _get_auth_service()
+    try:
+        return auth.login(req.email, req.password)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+
+
+@app.get("/api/auth/me")
+async def get_me(user: dict = Depends(get_current_user)):
+    """Get current user info."""
+    auth = _get_auth_service()
+    info = auth.get_user(user["user_id"])
+    if not info:
+        raise HTTPException(404, "User not found")
+    return info
+
+
+# ---------------------------------------------------------------------------
+# Credit System (authenticated)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/credits")
+async def get_credits(user: dict = Depends(get_current_user)):
+    """Get the current user's credit balance."""
     svc = _get_credit_service()
-    acct = svc.get_or_create_account(user_id)
+    acct = svc.get_or_create_account(user["user_id"])
     return {
         "user_id": acct.user_id,
         "balance_usd": round(acct.balance_usd, 4),
@@ -607,14 +683,13 @@ async def get_credits(user_id: str):
 
 
 @app.post("/api/credits/purchase")
-async def purchase_credits(req: PurchaseCreditsRequest):
-    """Add credits to a user's balance."""
+async def purchase_credits(req: PurchaseCreditsRequest, user: dict = Depends(get_current_user)):
+    """Add credits to the current user's balance (manual top-up for testing)."""
     if req.amount_usd <= 0:
         raise HTTPException(400, "Amount must be positive")
     svc = _get_credit_service()
-    new_balance = svc.purchase_credits(req.user_id, req.amount_usd)
+    new_balance = svc.purchase_credits(user["user_id"], req.amount_usd)
     return {
-        "user_id": req.user_id,
         "amount_usd": req.amount_usd,
         "new_balance_usd": round(new_balance, 4),
     }
@@ -622,19 +697,96 @@ async def purchase_credits(req: PurchaseCreditsRequest):
 
 @app.post("/api/credits/estimate")
 async def estimate_cost(req: EstimateCostRequest):
-    """Estimate the credit cost for converting N pages."""
+    """Estimate the credit cost for converting N pages (public, no auth needed)."""
     svc = _get_credit_service()
-    return svc.estimate_cost(req.num_pages, translate=req.translate)
+    return svc.estimate_cost(req.num_pages, doc_type=req.doc_type)
 
 
-@app.get("/api/credits/{user_id}/history")
-async def get_credit_history(user_id: str, limit: int = 50):
-    """Get a user's recent credit usage history."""
+@app.get("/api/credits/pricing")
+async def get_pricing():
+    """Return the public pricing table (no raw costs exposed)."""
+    from backend.services.credit_service import (
+        PRICE_IMAGE_PDF_PER_PAGE,
+        PRICE_DIGITAL_PDF_PER_PAGE,
+        PRICE_OTHER_PER_PAGE,
+    )
+    return {
+        "pricing": [
+            {"doc_type": "image_pdf", "label": "Image PDF (scanned)", "per_page_usd": PRICE_IMAGE_PDF_PER_PAGE},
+            {"doc_type": "digital_pdf", "label": "Digital PDF", "per_page_usd": PRICE_DIGITAL_PDF_PER_PAGE},
+            {"doc_type": "other", "label": "DOCX / HWPX / XLSX / PPTX", "per_page_usd": PRICE_OTHER_PER_PAGE},
+        ]
+    }
+
+
+@app.get("/api/credits/history")
+async def get_credit_history(user: dict = Depends(get_current_user), limit: int = 50):
+    """Get the current user's recent credit usage history."""
     svc = _get_credit_service()
-    acct = svc.get_or_create_account(user_id)
+    acct = svc.get_or_create_account(user["user_id"])
     history = acct.usage_history[-limit:]
     history.reverse()
-    return {"user_id": user_id, "history": history}
+    return {"history": history}
+
+
+# ---------------------------------------------------------------------------
+# Stripe Checkout (payment integration)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/payments/create-checkout")
+async def create_checkout(req: CreateCheckoutRequest, user: dict = Depends(get_current_user)):
+    """Create a Stripe Checkout session for credit purchase."""
+    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not stripe_key:
+        raise HTTPException(500, "Payment system not configured")
+
+    try:
+        import stripe
+        stripe.api_key = stripe_key
+
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "MoA Converter Credits"},
+                    "unit_amount": int(req.amount_usd * 100),
+                },
+                "quantity": 1,
+            }],
+            mode="payment",
+            success_url=os.environ.get("STRIPE_SUCCESS_URL", "http://localhost:3000/payment-success"),
+            cancel_url=os.environ.get("STRIPE_CANCEL_URL", "http://localhost:3000/payment-cancel"),
+            metadata={
+                "user_id": user["user_id"],
+                "amount_usd": str(req.amount_usd),
+            },
+        )
+        return {"checkout_url": session.url, "session_id": session.id}
+    except ImportError:
+        raise HTTPException(500, "stripe package not installed")
+    except Exception as e:
+        raise HTTPException(500, f"Payment error: {e}")
+
+
+@app.post("/api/payments/webhook")
+async def stripe_webhook(request_body: dict):
+    """Handle Stripe webhook events (payment confirmation)."""
+    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not stripe_key:
+        raise HTTPException(500, "Payment system not configured")
+
+    event_type = request_body.get("type", "")
+    if event_type == "checkout.session.completed":
+        session = request_body.get("data", {}).get("object", {})
+        metadata = session.get("metadata", {})
+        user_id = metadata.get("user_id")
+        amount = float(metadata.get("amount_usd", "0"))
+        if user_id and amount > 0:
+            svc = _get_credit_service()
+            svc.purchase_credits(user_id, amount)
+            logger.info("Payment confirmed: user=%s amount=$%.2f", user_id, amount)
+    return {"received": True}
 
 
 # ---------------------------------------------------------------------------
@@ -669,11 +821,53 @@ async def websocket_progress(websocket: WebSocket, job_id: str):
 # Background workers
 # ---------------------------------------------------------------------------
 
+def _detect_pdf_type(input_path: str) -> str:
+    """Detect whether a PDF is image-based (scanned) or digital."""
+    try:
+        from backend.core.digital_pdf_extractor import DigitalPdfExtractor
+        extractor = DigitalPdfExtractor()
+        if extractor.is_digital_pdf(input_path):
+            return "digital_pdf"
+        return "image_pdf"
+    except Exception:
+        return "image_pdf"  # default to more expensive type
+
+
 def _run_conversion(job_id: str, req: ConvertRequest) -> None:
     """Run single file conversion in background thread."""
     try:
         _jobs[job_id]["status"] = "processing"
         cfg = _get_config()
+
+        # Detect document type for pricing
+        ext = Path(req.input_path).suffix.lower()
+        if ext == ".pdf":
+            doc_type = _detect_pdf_type(req.input_path)
+        else:
+            doc_type = "other"
+
+        # Count pages for credit check (PDF only)
+        num_pages = 0
+        if ext == ".pdf":
+            try:
+                import fitz
+                with fitz.open(req.input_path) as doc:
+                    num_pages = len(doc)
+            except Exception:
+                num_pages = 1
+
+        # Credit check and deduction for PDF files
+        if doc_type != "other" and req.user_id:
+            svc = _get_credit_service()
+            if not svc.check_sufficient_balance(req.user_id, num_pages, doc_type):
+                _jobs[job_id]["status"] = "error"
+                _jobs[job_id]["message"] = "Insufficient credits"
+                return
+            # Debit upfront
+            svc.debit_usage(
+                req.user_id, num_pages, doc_type,
+                description=f"{Path(req.input_path).name} ({num_pages}p, {doc_type})",
+            )
 
         def progress_cb(msg: str, pct: float):
             _jobs[job_id]["progress"] = pct

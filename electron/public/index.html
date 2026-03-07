@@ -571,28 +571,11 @@
           <div class="hint">높을수록 정확하지만 느림 (300 추천)</div>
         </div>
         <div class="setting-group">
-          <label>Gemini API Key</label>
-          <div style="display:flex;gap:6px">
-            <input type="password" id="geminiKey" placeholder="Gemini API 키 입력" style="font-family:monospace;font-size:12px;flex:1">
-            <button class="browse-btn" onclick="saveGeminiKey()" style="padding:8px 12px;font-size:12px">저장</button>
-          </div>
-          <div class="hint" id="geminiKeyStatus">VLM/LLM 모드 사용 시 필요 (선택사항)</div>
-        </div>
-        <div class="setting-group">
-          <label>Upstage Document Parse API Key</label>
-          <div style="display:flex;gap:6px">
-            <input type="password" id="upstageKey" placeholder="Upstage API 키 입력" style="font-family:monospace;font-size:12px;flex:1">
-            <button class="browse-btn" onclick="saveUpstageKey()" style="padding:8px 12px;font-size:12px">저장</button>
-          </div>
-          <div class="hint" id="upstageKeyStatus">스캔 PDF OCR에 사용 (선택사항)</div>
-        </div>
-        <div class="setting-group">
-          <label>API 비용 안내 (1000페이지 기준)</label>
+          <label>서비스 요금표</label>
           <div class="hint" style="line-height:1.8">
-            Upstage Document Parse: ~$10 ($0.01/페이지)<br>
-            Gemini Flash-Lite 입력: ~$0.06 ($0.075/1M tokens)<br>
-            Gemini Flash-Lite 출력: ~$0.09 ($0.30/1M tokens)<br>
-            합계: ~$10.15 (디지털 PDF만: ~$0.15)
+            이미지 PDF (스캔): $0.02 / 페이지<br>
+            디지털 PDF: $0.005 / 페이지<br>
+            기타 문서 (DOCX, HWPX, XLSX, PPTX): 무료
           </div>
         </div>
       </div>

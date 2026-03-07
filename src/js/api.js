@@ -186,7 +186,51 @@ export async function moaToolManifest() {
   return await invoke("moa_tool_manifest");
 }
 
-// ─── API Key & Credits ───────────────────────────────
+// ─── Auth ─────────────────────────────────────────────
+export async function register(email, password, displayName) {
+  return await invoke("auth_register", { email, password, displayName: displayName || "" });
+}
+
+export async function login(email, password) {
+  return await invoke("auth_login", { email, password });
+}
+
+export async function getMe() {
+  return await invoke("auth_get_me");
+}
+
+export function getAuthToken() {
+  return localStorage.getItem("auth_token") || "";
+}
+
+export async function setAuthToken(token) {
+  localStorage.setItem("auth_token", token);
+  // Also sync to Tauri state so Rust commands can use it
+  try {
+    await invoke("set_auth_token", { token });
+  } catch {
+    // Backend may not support this yet
+  }
+}
+
+export function clearAuth() {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("user_info");
+}
+
+export function getUserInfo() {
+  try {
+    return JSON.parse(localStorage.getItem("user_info") || "null");
+  } catch {
+    return null;
+  }
+}
+
+export function setUserInfo(info) {
+  localStorage.setItem("user_info", JSON.stringify(info));
+}
+
+// ─── API Key (operator only, kept for local dev) ─────
 export async function setApiKey(apiKey) {
   return await invoke("set_api_key", { apiKey: apiKey });
 }
@@ -203,20 +247,29 @@ export async function getUpstageApiKeyStatus() {
   return await invoke("get_upstage_api_key_status");
 }
 
-export async function getCredits(userId) {
-  return await invoke("get_credits", { userId: userId });
+// ─── Credits ──────────────────────────────────────────
+export async function getCredits() {
+  return await invoke("get_credits", {});
 }
 
-export async function purchaseCredits(userId, amountUsd) {
-  return await invoke("purchase_credits", { userId: userId, amountUsd: amountUsd });
+export async function purchaseCredits(amountUsd) {
+  return await invoke("purchase_credits", { amountUsd });
 }
 
-export async function estimateCost(numPages) {
-  return await invoke("estimate_cost", { numPages: numPages });
+export async function estimateCost(numPages, docType) {
+  return await invoke("estimate_cost", { numPages, docType: docType || "image_pdf" });
 }
 
-export async function getCreditHistory(userId) {
-  return await invoke("get_credit_history", { userId: userId });
+export async function getPricing() {
+  return await invoke("get_pricing");
+}
+
+export async function getCreditHistory() {
+  return await invoke("get_credit_history");
+}
+
+export async function createCheckout(amountUsd) {
+  return await invoke("create_checkout", { amountUsd });
 }
 
 // ─── WebSocket Progress ──────────────────────────────
