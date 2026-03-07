@@ -418,6 +418,68 @@ async def get_pipeline_mode():
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+
+class BidiCheckRequest(BaseModel):
+    pdf_path: str
+
+
+@app.post("/api/diagnostics/bidi-check")
+async def bidi_check(req: BidiCheckRequest):
+    """Run BiDi numeral displacement diagnostic on a PDF.
+
+    Verifies that PyMuPDF's MuPDF glyph width fix is working correctly
+    for CJK + Arabic numeral mixed text.
+    """
+    pdf_path = Path(req.pdf_path)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found")
+
+    try:
+        from backend.core.digital_pdf_extractor import DigitalPdfExtractor
+        extractor = DigitalPdfExtractor()
+        report = await asyncio.get_event_loop().run_in_executor(
+            None, extractor.verify_bidi_fix, pdf_path,
+        )
+        return report
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PyMuPDF not installed: {exc}",
+        )
+    except Exception as exc:
+        logger.error("BiDi diagnostic failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/pymupdf-version")
+async def pymupdf_version():
+    """Check PyMuPDF version and whether it includes the BiDi fix."""
+    try:
+        from backend.core.digital_pdf_extractor import DigitalPdfExtractor
+        extractor = DigitalPdfExtractor()
+        is_fixed, version_str = extractor._check_pymupdf_version()
+        return {
+            "pymupdf_version": version_str,
+            "bidi_fix_included": is_fixed,
+            "minimum_required": "1.25.3",
+            "recommendation": (
+                "Version OK" if is_fixed
+                else "Upgrade required: pip install --upgrade pymupdf"
+            ),
+        }
+    except ImportError:
+        return {
+            "pymupdf_version": "not installed",
+            "bidi_fix_included": False,
+            "minimum_required": "1.25.3",
+            "recommendation": "Install PyMuPDF: pip install pymupdf>=1.25.3",
+        }
+
+
+# ---------------------------------------------------------------------------
 # HTML Translation (for non-PDF documents)
 # ---------------------------------------------------------------------------
 

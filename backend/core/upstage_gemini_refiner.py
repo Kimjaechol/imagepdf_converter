@@ -311,14 +311,25 @@ Fix ONLY what is wrong. Do NOT rewrite or restructure the document.
 5. **Missing content**: If visible text in the image is missing from extraction, add it
 6. **Reading order**: If blocks appear in wrong order compared to visual layout, fix order
 7. **Korean heading patterns**: "제1장"/"제1편" = h2, "제1절"/"제1관" = h3, "제1조" = h4
-8. **CRITICAL - Number/digit position errors**: The PDF text extractor has a known bug
-   where Arabic numerals (0-9) get displaced to the END of a line. Compare EVERY number
-   in the extracted text against its position in the original image. If a number like a
-   year (2024), amount (1,000,000), article number (제1조), date (3월 15일), or any other
-   digit appears at the wrong position in the text, MOVE IT to the correct position as
-   shown in the original image. This is the MOST IMPORTANT check. Examples:
-   - Wrong: "년도 매출액은 원입니다 2024 1,000,000" → Fix: "2024년도 매출액은 1,000,000원입니다"
-   - Wrong: "서울시 구 동 번지 강남 123 456" → Fix: "서울시 강남구 123동 456번지"
+8. **CRITICAL - Number/digit position errors (MuPDF glyph width bug)**:
+   The underlying PDF C library (MuPDF) has a bug in glyph width calculation when
+   CJK fonts (Korean, Chinese, Japanese) are mixed with Arabic numerals (0-9).
+   The bug causes the x-coordinate of digit characters to be miscalculated, displacing
+   numbers to the WRONG POSITION in the text — typically to the END of a line.
+
+   **You MUST compare EVERY number in the extracted text against its position in the
+   original page image.** This is the MOST IMPORTANT check. If ANY number (year, amount,
+   article number, date, address, etc.) appears at the wrong position, MOVE IT to the
+   exact position shown in the original image.
+
+   Common displacement patterns to look for:
+   - Numbers pushed to end of line: "년도 매출액은 원입니다 2024 1,000,000" → "2024년도 매출액은 1,000,000원입니다"
+   - Address numbers displaced: "서울시 구 동 번지 강남 123 456" → "서울시 강남구 123동 456번지"
+   - Article numbers detached: "제 조 (목적) 1" → "제1조 (목적)"
+   - Dates split: "월 일 3 15" → "3월 15일"
+   - Percentage/units displaced: "증가율은 %입니다 5.3" → "증가율은 5.3%입니다"
+
+   **Do NOT change the VALUE of any number** — only fix its POSITION in the text.
 
 ## What NOT to Change:
 - Do NOT change the VALUE of numbers, dates, or amounts – only fix their POSITION in the text
