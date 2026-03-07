@@ -143,8 +143,11 @@ class OcrEngine:
                     "rec_proc": load_rec_proc(),
                 }
 
+            # Apply light preprocessing for scanned images
+            ocr_img = self._preprocess_for_surya(img)
+
             results = run_ocr(
-                [img],
+                [ocr_img],
                 [self.languages],
                 self._surya_model["det_model"],
                 self._surya_model["det_proc"],
@@ -300,5 +303,34 @@ class OcrEngine:
             # Denoise
             denoised = cv2.fastNlMeansDenoising(enhanced, None, 10, 7, 21)
             return Image.fromarray(denoised).convert("RGB")
+        except ImportError:
+            return img
+
+    @staticmethod
+    def _preprocess_for_surya(img: Image.Image) -> Image.Image:
+        """Light preprocessing for Surya OCR on scanned pages.
+
+        Surya handles color images well, but scanned pages with colored
+        backgrounds (e.g., red/orange header boxes) benefit from contrast
+        enhancement while keeping color information for Surya's detection.
+        """
+        try:
+            import cv2
+            import numpy as np
+
+            arr = np.array(img)
+            if len(arr.shape) < 3:
+                return img
+
+            # Convert to LAB color space for luminance-only enhancement
+            lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
+            l_channel = lab[:, :, 0]
+
+            # CLAHE on luminance channel only (preserves color)
+            clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+            lab[:, :, 0] = clahe.apply(l_channel)
+
+            enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+            return Image.fromarray(enhanced)
         except ImportError:
             return img
