@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PipelineConfig:
     pages_per_chunk: int = 10
-    max_workers: int = 4
+    max_workers: int = 10
     dpi: int = 300
     output_formats: list[str] = field(default_factory=lambda: ["html", "markdown"])
     # Pipeline mode: "standard" (multi-step) | "unified_vision" (single Gemini call)
@@ -175,6 +176,161 @@ class Pipeline:
             table_format=self.cfg.md_table_format,
             footnote_style=self.cfg.md_footnote_style,
         )
+
+    # ------------------------------------------------------------------
+    # Adaptive worker scaling & upload pipelining
+    # ------------------------------------------------------------------
+    #
+    # Architecture:
+    #
+    #   total_pool  = min(배치수, ram_cap)
+    #       → 전체 worker 수. RAM만으로 제한.
+    #       → 모든 배치를 동시에 투입하여 대기열에 넣는다.
+    #
+    #   upload_gate = Semaphore(upload_slots)
+    #       → 동시에 업로드 중인 worker 수. 대역폭으로 산출.
+    #       → 네트워크 혼잡 없이 풀 속도를 유지하는 최대치.
+    #
+    # Worker 흐름:
+    #   1. sem.acquire()           ← 업로드 슬롯 대기
+    #   2. generate_content() 시작  ← 업로드 시작
+    #   3. Timer(est_upload) 후     ← 업로드 완료 추정 시점
+    #      sem.release()           ← 다음 worker 즉시 업로드 시작
+    #   4. ...추론 응답 대기 계속...  ← 네트워크 미사용
+    #   5. 결과 수신 → 완료
+    #
+    # 시간축:
+    #   W1: [■■upload■■][────inference────][done]
+    #   W2:  wait [■■upload■■][────inference────][done]
+    #   W3:        wait [■■upload■■][────inference────]
+    #   W4:              wait [■■upload■■][────infere...
+    #                         ↑ 업로드 끝나자마자 즉시 투입
+    # ------------------------------------------------------------------
+
+    _MEM_PER_WORKER_MB = 17    # ~5 page images + JSON buffer per worker
+    _SYSTEM_RESERVE_MB = 2048  # 2GB reserved for OS + other apps
+    _BATCH_INFERENCE_SEC = 5.0 # estimated Gemini inference time per batch
+    _HEADROOM = 1.3            # 30% headroom over zero-congestion point
+
+    @staticmethod
+    def _get_available_memory_mb() -> int:
+        """Read MemAvailable from /proc/meminfo (Linux)."""
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) // 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        return 4096
+
+    def _measure_upload_bandwidth(
+        self, sample_image_path: str, api_key: str,
+    ) -> tuple[float | None, float]:
+        """Measure pure upload speed via Gemini File API (free, no tokens).
+
+        Uploads a sample image to Gemini's file storage, measures the
+        elapsed time, then immediately deletes the file.  This gives
+        the exact upload bandwidth to the same Google servers that will
+        handle the real batches — with zero inference overhead and zero
+        API cost.
+
+        Returns (upload_speed_MB_s | None, image_size_MB).
+        """
+        import google.generativeai as genai
+
+        avg_img_mb = 3.0
+
+        if not sample_image_path or not api_key:
+            return None, avg_img_mb
+
+        try:
+            img_size_bytes = os.path.getsize(sample_image_path)
+            avg_img_mb = img_size_bytes / (1024 * 1024)
+
+            genai.configure(api_key=api_key)
+
+            # Pure upload — no model inference, no token cost
+            start = time.time()
+            uploaded_file = genai.upload_file(sample_image_path)
+            elapsed = time.time() - start
+
+            # Clean up immediately
+            try:
+                genai.delete_file(uploaded_file.name)
+            except Exception:
+                pass  # non-critical; files auto-expire after 48h
+
+            speed = avg_img_mb / max(elapsed, 0.01)
+
+            logger.info(
+                "Bandwidth probe (File API): %.2fMB uploaded in %.2fs "
+                "→ %.1f MB/s",
+                avg_img_mb, elapsed, speed,
+            )
+            return speed, avg_img_mb
+
+        except Exception as exc:
+            logger.warning("Bandwidth measurement failed: %s", exc)
+            return None, avg_img_mb
+
+    def _compute_scaling(
+        self,
+        num_batches: int,
+        sample_image_path: str | None,
+        api_key: str,
+    ) -> tuple[int, int, float]:
+        """Return (total_pool, upload_slots, est_upload_sec).
+
+        total_pool   — worker 수 (RAM 기반, 모든 배치 동시 투입용).
+        upload_slots — 동시 업로드 수 (대역폭 기반, 혼잡 방지).
+        est_upload_sec — 배치당 추정 업로드 시간 (Timer 해제용).
+
+        RAM 계산:
+          가용 = MemAvailable - 2GB (OS/앱 예약)
+          ram_cap = 가용 / 17MB per worker
+
+        대역폭 계산:
+          batch_upload = 5장 × img_size / 측정속도
+          batch_cycle  = batch_upload + 5s (추론)
+          upload_slots = ⌊(cycle / upload) × 1.3⌋
+            → 추론 대기 중 네트워크 유휴를 다른 worker가 채우는 배수
+        """
+        if num_batches <= 1:
+            return 1, 1, 1.0
+
+        # ── 대역폭 측정 ──
+        speed, img_mb = self._measure_upload_bandwidth(
+            sample_image_path, api_key,
+        )
+
+        if speed is not None and speed > 0:
+            batch_upload_sec = (5 * img_mb) / speed
+            batch_cycle_sec = batch_upload_sec + self._BATCH_INFERENCE_SEC
+            upload_slots = max(1, int(
+                (batch_cycle_sec / batch_upload_sec) * self._HEADROOM
+            ))
+            est_upload = batch_upload_sec
+        else:
+            upload_slots = num_batches
+            est_upload = 1.0
+
+        # ── RAM 측정 ──
+        avail_mb = self._get_available_memory_mb()
+        usable_mb = max(avail_mb - self._SYSTEM_RESERVE_MB, 256)
+        ram_cap = max(1, usable_mb // self._MEM_PER_WORKER_MB)
+
+        total_pool = min(num_batches, ram_cap)
+        upload_slots = min(upload_slots, total_pool)
+
+        logger.info(
+            "Worker scaling: upload=%.1f MB/s, img=%.1fMB, "
+            "est_upload=%.2fs → upload_slots=%d, "
+            "ram_cap=%d (avail=%dMB), batches=%d → total_pool=%d",
+            speed or 0, img_mb, est_upload, upload_slots,
+            ram_cap, avail_mb, num_batches, total_pool,
+        )
+        return total_pool, upload_slots, est_upload
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -413,24 +569,66 @@ class Pipeline:
                 target_language=job.target_language,
             )
 
-        # 6. Process all batches in parallel via thread pool
-        self.progress_callback("Processing batches in parallel", 0.20)
+        # 6. Measure resources & process batches with upload pipelining
+        self.progress_callback("Measuring network & memory", 0.19)
         api_key = os.environ.get("GEMINI_API_KEY", "")
 
         all_results: list[PageResult] = []
         completed = 0
 
-        with ThreadPoolExecutor(max_workers=self.cfg.max_workers) as executor:
+        sample_image = all_page_data[0]["image_path"] if all_page_data else None
+        total_pool, upload_slots, est_upload_sec = self._compute_scaling(
+            num_batches=len(all_batches),
+            sample_image_path=sample_image,
+            api_key=api_key,
+        )
+        self.progress_callback("Processing batches in parallel", 0.20)
+
+        # Upload gate: limits how many workers upload simultaneously.
+        # Workers release the gate after est_upload_sec via a Timer,
+        # so the NEXT worker starts uploading while this one waits
+        # for inference — no network idle time between batches.
+        upload_sem = threading.Semaphore(upload_slots)
+
+        def _throttled_call(fn, *args):
+            """Acquire upload slot → call Gemini → release after upload."""
+            upload_sem.acquire()
+            # Track whether the semaphore was already released by timer
+            released = threading.Event()
+
+            def _release_once():
+                if not released.is_set():
+                    released.set()
+                    upload_sem.release()
+
+            # Schedule release after estimated upload duration.
+            # Even if the estimate is slightly off, a brief overlap
+            # or tiny wait are both harmless.
+            release_timer = threading.Timer(est_upload_sec, _release_once)
+            release_timer.daemon = True
+            release_timer.start()
+            try:
+                return fn(*args)
+            except BaseException:
+                # If fn() fails before the timer fires, release now
+                # so other workers aren't permanently blocked.
+                release_timer.cancel()
+                _release_once()
+                raise
+
+        with ThreadPoolExecutor(max_workers=total_pool) as executor:
             futures = {}
             for batch_tag, batch_pages in all_batches:
                 if batch_tag == "tag0":
                     future = executor.submit(
+                        _throttled_call,
                         self.unified_vision._process_text_only_batch,
                         batch_pages, ocr_blocks, api_key, classifications,
                         translation_ctx,
                     )
                 else:
                     future = executor.submit(
+                        _throttled_call,
                         self.unified_vision._process_complex_batch,
                         batch_pages, ocr_blocks, api_key, classifications,
                         translation_ctx,

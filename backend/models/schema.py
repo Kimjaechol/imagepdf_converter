@@ -14,6 +14,7 @@ from typing import Any
 
 class BlockType(str, enum.Enum):
     HEADING = "heading"
+    SUBTITLE = "subtitle"
     PARAGRAPH = "paragraph"
     TABLE = "table"
     FIGURE = "figure"
@@ -167,6 +168,8 @@ class LayoutBlock:
     content_seq: int = 0          # e.g. table_seq=3 → "표 3" / "Table 3"
     # ID of the parent block this caption belongs to
     parent_block_id: str = ""     # for CAPTION → links to TABLE/FIGURE id
+    # Footnote marker (e.g. "1", "*", "†") linking body ref to footnote block
+    footnote_marker: str = ""
 
 
 # ---------------------------------------------------------------------------

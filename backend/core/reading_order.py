@@ -92,8 +92,10 @@ class ReadingOrderRefiner:
                 blocks, structural_lines, page_width, page_height,
             )
         else:
-            # Fallback: heuristic column detection (no lines available)
-            blocks = self._column_heuristic_order(blocks, page_width, page_height)
+            # Fallback: heuristic column detection with 4-zone classification
+            blocks = self._column_heuristic_order(
+                blocks, page_width, page_height, vector_lines,
+            )
 
         # 2. If hybrid/vlm and page is complex, refine with VLM
         if self.mode in ("vlm", "hybrid") and self._is_complex_page(blocks):
@@ -131,7 +133,9 @@ class ReadingOrderRefiner:
         zones = self._build_zones(structural_lines, page_width, page_height)
 
         if not zones:
-            return self._column_heuristic_order(blocks, page_width, page_height)
+            return self._column_heuristic_order(
+                blocks, page_width, page_height, structural_lines,
+            )
 
         # Assign each block to the zone whose bbox best contains it
         unassigned: list[LayoutBlock] = []
@@ -319,24 +323,47 @@ class ReadingOrderRefiner:
         blocks: list[LayoutBlock],
         page_width: float,
         page_height: float,
+        vector_lines: list[dict] | None = None,
     ) -> list[LayoutBlock]:
-        """Heuristic reading order based on column detection (fallback)."""
-        num_cols = self._detect_columns(blocks, page_width)
+        """Heuristic reading order using 4-zone classification + projection-based
+        column detection. Reads: body (column by column) → footnotes.
+        Headers/footers are kept but placed at start/end."""
+
+        # 1. Classify blocks into 4 page zones
+        zones = self._classify_page_zones(
+            blocks, page_width, page_height, vector_lines,
+        )
+
+        body_blocks = zones["body"]
+        header_blocks = zones["header"]
+        footnote_blocks = zones["footnote"]
+        footer_blocks = zones["footer"]
+
+        # 2. Detect columns in body blocks only
+        num_cols = self._detect_columns(body_blocks, page_width, page_height)
+
+        # AI semantic verification (S180): verify gap-based columns make sense
+        if num_cols > 1 and self.mode in ("vlm", "hybrid"):
+            num_cols = self._verify_columns_with_ai(
+                body_blocks, num_cols, page_width, page_height,
+            )
 
         if num_cols > 1:
-            col_boundaries = self._compute_column_boundaries(blocks, num_cols, page_width)
-            for block in blocks:
+            col_boundaries = self._compute_column_boundaries(
+                body_blocks, num_cols, page_width, page_height,
+            )
+            for block in body_blocks:
                 if block.bbox:
                     block.column_index = self._assign_column(block.bbox, col_boundaries)
         else:
-            for block in blocks:
+            for block in body_blocks:
                 block.column_index = 0
 
-        # Sort: column_index ASC, then y0 ASC
+        # 3. Sort body: full-width interleaved with column blocks
         full_width_blocks = []
         column_blocks: dict[int, list[LayoutBlock]] = {}
 
-        for block in blocks:
+        for block in body_blocks:
             if block.bbox and block.bbox.width > page_width * 0.7:
                 full_width_blocks.append(block)
             else:
@@ -350,21 +377,371 @@ class ReadingOrderRefiner:
         col_indices = sorted(column_blocks.keys())
 
         if num_cols > 1:
-            ordered = self._interleave_columns(
+            body_ordered = self._interleave_columns(
                 full_width_blocks, column_blocks, col_indices
             )
         else:
-            all_blocks = full_width_blocks + [
+            all_body = full_width_blocks + [
                 b for col in col_indices for b in column_blocks[col]
             ]
-            ordered = sorted(all_blocks, key=lambda b: b.bbox.y0 if b.bbox else 0)
+            body_ordered = sorted(all_body, key=lambda b: b.bbox.y0 if b.bbox else 0)
+
+        # 4. Assemble final order: headers → body → footnotes → footers
+        header_blocks.sort(key=lambda b: b.bbox.x0 if b.bbox else 0)
+        footnote_blocks.sort(key=lambda b: b.bbox.y0 if b.bbox else 0)
+        footer_blocks.sort(key=lambda b: b.bbox.x0 if b.bbox else 0)
+
+        ordered = header_blocks + body_ordered + footnote_blocks + footer_blocks
 
         for i, block in enumerate(ordered):
             block.reading_order = i
 
         return ordered
 
-    def _detect_columns(self, blocks: list[LayoutBlock], page_width: float) -> int:
+    # ------------------------------------------------------------------
+    # Page layout 4-zone classification
+    # ------------------------------------------------------------------
+
+    def _classify_page_zones(
+        self,
+        blocks: list[LayoutBlock],
+        page_width: float,
+        page_height: float,
+        vector_lines: list[dict] | None = None,
+    ) -> dict[str, list[LayoutBlock]]:
+        """Classify blocks into 4 page zones: header, body, footnote, footer.
+
+        Returns dict with keys "header", "body", "footnote", "footer".
+        """
+        if not blocks:
+            return {"header": [], "body": blocks, "footnote": [], "footer": []}
+
+        # Compute median font size for classification
+        font_sizes = [
+            b.style.font_size for b in blocks
+            if b.style and b.style.font_size and b.style.font_size > 0
+        ]
+        median_font = float(np.median(font_sizes)) if font_sizes else 12.0
+
+        header_threshold = page_height * 0.08
+        footer_threshold = page_height * 0.88
+
+        header_blocks: list[LayoutBlock] = []
+        footer_blocks: list[LayoutBlock] = []
+        footnote_blocks: list[LayoutBlock] = []
+        body_blocks: list[LayoutBlock] = []
+
+        # Detect footnote separator: horizontal line in bottom 25% of page
+        footnote_sep_y = None
+        for ln in (vector_lines or []):
+            if ln["type"] != "line":
+                continue
+            if ln.get("line_class") != "structural":
+                continue
+            y0, y1 = ln["y0"], ln["y1"]
+            x0, x1 = ln["x0"], ln["x1"]
+            dy = abs(y1 - y0)
+            dx = abs(x1 - x0)
+            # Horizontal line in bottom 25%, width >= 15% of page
+            if dy < 5 and dx > page_width * 0.15:
+                mid_y = (y0 + y1) / 2
+                if mid_y > page_height * 0.75:
+                    if footnote_sep_y is None or mid_y < footnote_sep_y:
+                        footnote_sep_y = mid_y
+
+        for b in blocks:
+            if not b.bbox:
+                body_blocks.append(b)
+                continue
+
+            fs = b.style.font_size if b.style and b.style.font_size else median_font
+            is_small_font = fs < median_font * 0.8
+            is_only_digits = b.text and b.text.strip().isdigit() if b.text else False
+            is_edge_aligned = (
+                b.bbox.x0 < page_width * 0.15
+                or b.bbox.x1 > page_width * 0.85
+            )
+
+            # Header zone: top 8%, small font or edge-aligned
+            if b.bbox.y0 < header_threshold:
+                if is_small_font or (is_edge_aligned and b.bbox.height < page_height * 0.03):
+                    b.block_type = BlockType.HEADER
+                    header_blocks.append(b)
+                    continue
+
+            # Footer zone: bottom 12%, small font or digit-only
+            if b.bbox.y1 > footer_threshold:
+                if is_small_font or is_only_digits:
+                    if b.block_type != BlockType.FOOTNOTE:
+                        b.block_type = BlockType.FOOTER
+                    footer_blocks.append(b)
+                    continue
+
+            # Footnote zone: below footnote separator
+            if footnote_sep_y is not None and b.bbox.y0 > footnote_sep_y:
+                if b.bbox.y1 <= footer_threshold or not (is_small_font or is_only_digits):
+                    b.block_type = BlockType.FOOTNOTE
+                    footnote_blocks.append(b)
+                    continue
+
+            body_blocks.append(b)
+
+        return {
+            "header": header_blocks,
+            "body": body_blocks,
+            "footnote": footnote_blocks,
+            "footer": footer_blocks,
+        }
+
+    # ------------------------------------------------------------------
+    # Vertical projection profile column detection (gap-based)
+    # ------------------------------------------------------------------
+
+    def _detect_columns_by_projection(
+        self,
+        blocks: list[LayoutBlock],
+        page_width: float,
+        page_height: float,
+    ) -> tuple[int, list[float]]:
+        """Detect multi-column layout using vertical projection profile.
+
+        Finds consistent vertical whitespace gaps (>= 3 avg char widths)
+        that span at least 50% of the body height.
+
+        Returns (num_columns, list_of_gap_center_x_values).
+        """
+        body_blocks = [
+            b for b in blocks
+            if b.bbox and b.bbox.width < page_width * 0.7
+        ]
+        if len(body_blocks) < 4:
+            return 1, []
+
+        # Estimate average character width
+        char_widths = []
+        for b in body_blocks:
+            if b.text and b.bbox and len(b.text.strip()) > 0:
+                cw = b.bbox.width / max(len(b.text.strip()), 1)
+                if 3 < cw < 50:  # Reasonable range
+                    char_widths.append(cw)
+        avg_char_width = float(np.median(char_widths)) if char_widths else 13.0
+        min_gap_width = avg_char_width * 3
+
+        # Find content bounds (exclude margins)
+        all_x0 = [b.bbox.x0 for b in body_blocks if b.bbox]
+        all_x1 = [b.bbox.x1 for b in body_blocks if b.bbox]
+        if not all_x0:
+            return 1, []
+        content_left = min(all_x0)
+        content_right = max(all_x1)
+
+        # Build vertical projection profile at 1px resolution
+        width_int = int(page_width) + 1
+        projection = np.zeros(width_int, dtype=np.int32)
+        for b in body_blocks:
+            if b.bbox:
+                x0 = max(0, int(b.bbox.x0))
+                x1 = min(width_int - 1, int(b.bbox.x1))
+                projection[x0:x1 + 1] += 1
+
+        # Find whitespace gaps within content area
+        gaps: list[tuple[float, float, float]] = []  # (gap_start, gap_end, center)
+        gap_start = None
+        scan_left = max(0, int(content_left) + 5)
+        scan_right = min(width_int, int(content_right) - 5)
+
+        for x in range(scan_left, scan_right):
+            if projection[x] <= 1:
+                if gap_start is None:
+                    gap_start = x
+            else:
+                if gap_start is not None:
+                    gap_width = x - gap_start
+                    if gap_width >= min_gap_width:
+                        center = (gap_start + x) / 2.0
+                        gaps.append((float(gap_start), float(x), center))
+                    gap_start = None
+
+        if not gaps:
+            return 1, []
+
+        # Validate each gap: vertical continuity + left/right balance
+        valid_gaps: list[float] = []
+        body_y_min = min(b.bbox.y0 for b in body_blocks if b.bbox)
+        body_y_max = max(b.bbox.y1 for b in body_blocks if b.bbox)
+        body_height = body_y_max - body_y_min
+
+        for gap_x0, gap_x1, gap_cx in gaps:
+            # Vertical continuity: split body into 10 horizontal bands
+            num_bands = 10
+            band_height = body_height / num_bands if body_height > 0 else 1
+            empty_bands = 0
+            for band_i in range(num_bands):
+                band_top = body_y_min + band_i * band_height
+                band_bot = band_top + band_height
+                # Check if any block in this band crosses the gap
+                has_crossing = False
+                for b in body_blocks:
+                    if not b.bbox:
+                        continue
+                    if b.bbox.y1 < band_top or b.bbox.y0 > band_bot:
+                        continue  # Not in this band
+                    if b.bbox.x0 < gap_cx < b.bbox.x1:
+                        has_crossing = True
+                        break
+                if not has_crossing:
+                    empty_bands += 1
+
+            if empty_bands < num_bands * 0.5:
+                continue  # Gap doesn't span enough of the page height
+
+            # Left/right balance: at least 3 blocks on each side
+            left_count = sum(
+                1 for b in body_blocks
+                if b.bbox and b.bbox.center_x < gap_cx
+            )
+            right_count = sum(
+                1 for b in body_blocks
+                if b.bbox and b.bbox.center_x > gap_cx
+            )
+            if left_count >= 3 and right_count >= 3:
+                valid_gaps.append(gap_cx)
+
+        if not valid_gaps:
+            return 1, []
+
+        # Merge close gaps (within 2x avg_char_width)
+        merged: list[float] = [valid_gaps[0]]
+        for g in valid_gaps[1:]:
+            if g - merged[-1] > avg_char_width * 2:
+                merged.append(g)
+            else:
+                merged[-1] = (merged[-1] + g) / 2  # Average
+
+        num_cols = len(merged) + 1
+        logger.info(
+            "Projection-based column detection: %d column(s), gaps at x=%s",
+            num_cols, [f"{g:.0f}" for g in merged],
+        )
+        return num_cols, merged
+
+    def _verify_columns_with_ai(
+        self,
+        blocks: list[LayoutBlock],
+        num_cols: int,
+        page_width: float,
+        page_height: float,
+    ) -> int:
+        """AI semantic verification (S180): ask Gemini whether reading
+        left-column-first then right-column makes semantic sense.
+
+        If the AI determines the content flows across (not down) the columns,
+        we fall back to single-column reading order.
+
+        Returns the verified number of columns (may reduce to 1).
+        """
+        try:
+            import google.generativeai as genai
+
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                return num_cols  # No API key, trust geometric detection
+
+            # Compute column boundaries to split blocks
+            _, gap_centers = self._detect_columns_by_projection(
+                blocks, page_width, page_height,
+            )
+            if not gap_centers:
+                return num_cols
+
+            # Sample text from each column (first ~5 blocks each)
+            gap_cx = gap_centers[0]  # Primary gap for 2-column
+            left_texts = []
+            right_texts = []
+            for b in sorted(blocks, key=lambda b: b.bbox.y0 if b.bbox else 0):
+                if not b.text or not b.bbox:
+                    continue
+                preview = b.text[:120].strip()
+                if not preview:
+                    continue
+                if b.bbox.center_x < gap_cx:
+                    if len(left_texts) < 5:
+                        left_texts.append(preview)
+                else:
+                    if len(right_texts) < 5:
+                        right_texts.append(preview)
+
+            if len(left_texts) < 2 or len(right_texts) < 2:
+                return num_cols  # Not enough text to verify
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(self.gemini_model)
+
+            prompt = f"""You are a document layout expert. I detected a potential {num_cols}-column layout.
+Below are text samples from each column, reading top-to-bottom within each column.
+
+LEFT COLUMN (read first):
+{chr(10).join(f'  {i+1}. "{t}"' for i, t in enumerate(left_texts))}
+
+RIGHT COLUMN (read second):
+{chr(10).join(f'  {i+1}. "{t}"' for i, t in enumerate(right_texts))}
+
+Question: Does reading the LEFT column completely (top-to-bottom) FIRST, then the RIGHT column completely (top-to-bottom) produce coherent, logically connected text?
+
+Answer with ONLY a JSON object:
+{{"is_multi_column": true/false, "reason": "brief explanation"}}
+
+Rules:
+- true = each column is independent content (e.g., newspaper columns, side-by-side sections)
+- true = left column continues into right column (standard multi-column document flow)
+- false = text flows LEFT-to-RIGHT across columns on same line (it's actually a single wide column or a table)
+- false = left and right are clearly the same sentence split in half"""
+
+            response = model.generate_content(prompt)
+            result_text = response.text.strip()
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
+
+            result = json.loads(result_text)
+            is_multi = result.get("is_multi_column", True)
+            reason = result.get("reason", "")
+
+            if not is_multi:
+                logger.info(
+                    "AI column verification: REJECTED %d-column layout. Reason: %s",
+                    num_cols, reason,
+                )
+                return 1
+            else:
+                logger.info(
+                    "AI column verification: CONFIRMED %d-column layout. Reason: %s",
+                    num_cols, reason,
+                )
+                return num_cols
+
+        except Exception as exc:
+            logger.warning("AI column verification failed: %s. Trusting geometric detection.", exc)
+            return num_cols
+
+    def _detect_columns(
+        self,
+        blocks: list[LayoutBlock],
+        page_width: float,
+        page_height: float = 0,
+    ) -> int:
+        """Detect number of columns using projection profile first, then
+        fall back to center-point heuristic."""
+        # Try projection-based detection first (handles no-separator columns)
+        if page_height > 0:
+            num_cols, gap_centers = self._detect_columns_by_projection(
+                blocks, page_width, page_height,
+            )
+            if num_cols > 1:
+                return num_cols
+
+        # Fallback: simple center-point heuristic
         centers = []
         for b in blocks:
             if b.bbox and b.bbox.width < page_width * 0.7:
@@ -390,8 +767,19 @@ class ReadingOrderRefiner:
         return 1
 
     def _compute_column_boundaries(
-        self, blocks: list[LayoutBlock], num_cols: int, page_width: float
+        self,
+        blocks: list[LayoutBlock],
+        num_cols: int,
+        page_width: float,
+        page_height: float = 0,
     ) -> list[float]:
+        """Compute column boundaries using projection gaps if available."""
+        if page_height > 0:
+            _, gap_centers = self._detect_columns_by_projection(
+                blocks, page_width, page_height,
+            )
+            if gap_centers and len(gap_centers) == num_cols - 1:
+                return gap_centers
         step = page_width / num_cols
         return [step * (i + 1) for i in range(num_cols - 1)]
 

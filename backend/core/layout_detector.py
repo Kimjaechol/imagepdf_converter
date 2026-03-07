@@ -18,6 +18,7 @@ _CATEGORY_MAP: dict[str, BlockType] = {
     "title": BlockType.HEADING,
     "section-header": BlockType.HEADING,
     "heading": BlockType.HEADING,
+    "subtitle": BlockType.SUBTITLE,
     "text": BlockType.PARAGRAPH,
     "paragraph": BlockType.PARAGRAPH,
     "plain text": BlockType.PARAGRAPH,
