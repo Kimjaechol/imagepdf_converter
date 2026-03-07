@@ -503,6 +503,16 @@ function showResults(result) {
       }
     });
   });
+
+  // Auto-open the first HTML file in the editor after conversion
+  const firstHtml = files.find((f) => /\.html?$/i.test(f));
+  if (firstHtml) {
+    try {
+      await api.openEditorWindow(firstHtml);
+    } catch (e) {
+      console.warn("Auto-open editor failed:", e);
+    }
+  }
 }
 
 function switchTab(tab) {
