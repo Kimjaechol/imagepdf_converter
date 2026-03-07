@@ -577,6 +577,34 @@ class Pipeline:
         self.progress_callback("Measuring network & memory", 0.19)
         api_key = os.environ.get("GEMINI_API_KEY", "")
 
+        if not api_key:
+            logger.warning(
+                "GEMINI_API_KEY not set! All %d pages will use local OCR fallback only. "
+                "Set the API key in Settings for AI-powered layout analysis.",
+                len(all_page_data),
+            )
+            self.progress_callback(
+                "Warning: API key not set - using local OCR only", 0.20,
+            )
+            # Skip Gemini entirely; return fallback from OCR blocks directly
+            all_results: list[PageResult] = []
+            for pd in all_page_data:
+                page_idx = pd["page_index"]
+                fallback_blocks: list[LayoutBlock] = []
+                if page_idx in ocr_blocks:
+                    fallback_blocks = list(ocr_blocks[page_idx])
+                    for fb_i, fb_b in enumerate(fallback_blocks):
+                        if fb_b.reading_order < 0:
+                            fb_b.reading_order = fb_i
+                all_results.append(PageResult(
+                    page_index=page_idx,
+                    width=pd["width"],
+                    height=pd["height"],
+                    blocks=fallback_blocks,
+                ))
+            page_data_by_idx = {pd["page_index"]: pd for pd in all_page_data}
+            return all_results, total_pages, page_data_by_idx
+
         all_results: list[PageResult] = []
         completed = 0
 

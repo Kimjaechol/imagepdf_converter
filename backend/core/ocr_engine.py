@@ -216,8 +216,20 @@ class OcrEngine:
         try:
             import pytesseract
         except ImportError:
-            logger.error("pytesseract is not installed.")
-            return []
+            logger.error(
+                "Neither Surya nor Tesseract installed. "
+                "Cannot OCR page %d. Install: pip install surya-ocr",
+                page_index,
+            )
+            # Return placeholder so page is not completely blank
+            return [LayoutBlock(
+                id=f"noocr_{page_index}_0",
+                block_type=BlockType.PARAGRAPH,
+                text="[OCR 엔진 미설치: 텍스트 추출 불가. "
+                     "surya-ocr 또는 tesseract-ocr 설치 필요]",
+                page_index=page_index,
+                reading_order=0,
+            )]
 
         lang_str = "+".join(self._tesseract_lang_codes())
         data = pytesseract.image_to_data(
