@@ -38,6 +38,9 @@ Thumbs.db
 .env
 *.key
 
+# Runtime data (auth DB, credit accounts, API keys)
+data/
+
 # Models cache
 models_cache/
 *.onnx
