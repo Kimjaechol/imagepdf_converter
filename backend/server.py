@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -162,6 +163,14 @@ class DocumentConvertRequest(BaseModel):
     translate: bool = False
     source_language: str = ""
     target_language: str = "ko"
+
+
+class BatchDocumentConvertRequest(BaseModel):
+    input_paths: list[str]
+    output_dir: str
+    output_formats: list[str] = ["html", "markdown"]
+    refine_with_gemini: bool = True
+    max_workers: int | None = None  # Auto-detect if None
 
 
 class JobStatus(BaseModel):
@@ -644,14 +653,141 @@ HTML to translate:
 
 @app.get("/api/libreoffice/status")
 async def libreoffice_status():
-    """Check if LibreOffice is available for document conversion."""
+    """Check if LibreOffice is available and report parallel capacity."""
     try:
-        from backend.core.libreoffice_converter import is_libreoffice_available, get_soffice_path
+        from backend.core.libreoffice_converter import (
+            is_libreoffice_available,
+            get_soffice_path,
+            _detect_max_workers,
+        )
         available = is_libreoffice_available()
         path = get_soffice_path() if available else None
-        return {"available": available, "path": path}
+        workers = _detect_max_workers() if available else 0
+        return {"available": available, "path": path, "max_workers": workers}
     except Exception:
-        return {"available": False, "path": None}
+        return {"available": False, "path": None, "max_workers": 0}
+
+
+@app.post("/api/convert/document/batch")
+async def convert_document_batch(req: BatchDocumentConvertRequest):
+    """Batch-convert multiple documents in parallel using LibreOffice.
+
+    Each file gets its own soffice process with an isolated user profile.
+    The number of parallel workers auto-scales to CPU cores and available RAM.
+    Optionally applies Gemini post-processing to each file afterwards.
+    """
+    if not req.input_paths:
+        return {"results": [], "total": 0}
+
+    # Validate all files exist and have supported extensions
+    supported = {"docx", "hwpx", "xlsx", "pptx"}
+    for p in req.input_paths:
+        fp = Path(p)
+        if not fp.exists():
+            raise HTTPException(404, f"File not found: {p}")
+        ext = fp.suffix.lower().lstrip(".")
+        if ext not in supported:
+            raise HTTPException(
+                400, f"Unsupported format: {fp.name} (.{ext})"
+            )
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            _batch_convert_sync,
+            req.input_paths,
+            req.output_dir,
+            req.output_formats,
+            req.refine_with_gemini,
+            req.max_workers,
+        )
+        return result
+    except Exception as e:
+        logger.error("Batch document conversion failed: %s", e)
+        raise HTTPException(500, f"Batch conversion failed: {e}")
+
+
+def _batch_convert_sync(
+    input_paths: list[str],
+    output_dir: str,
+    output_formats: list[str],
+    refine_with_gemini: bool,
+    max_workers: int | None,
+) -> dict:
+    """Run LibreOffice batch conversion, then optionally Gemini-refine each."""
+    from backend.core.libreoffice_converter import convert_batch, clean_libreoffice_html
+
+    start = time.time()
+
+    # Step 1: Parallel LibreOffice conversion
+    lo_results = convert_batch(
+        input_paths, output_dir,
+        max_workers=max_workers,
+    )
+
+    # Step 2: Post-process each result (cleanup + optional Gemini + markdown)
+    final_results = []
+    want_html = "html" in output_formats
+    want_md = "markdown" in output_formats or "md" in output_formats
+
+    for i, lo in enumerate(lo_results):
+        path = input_paths[i]
+        stem = Path(path).stem
+        ext = Path(path).suffix.lower().lstrip(".")
+        file_out = Path(output_dir) / stem
+
+        if lo.get("error"):
+            final_results.append({
+                "input_path": path,
+                "error": lo["error"],
+                "output_files": [],
+            })
+            continue
+
+        html = clean_libreoffice_html(lo["html"])
+
+        # Gemini refinement
+        gemini_refined = False
+        if refine_with_gemini and os.environ.get("GEMINI_API_KEY"):
+            try:
+                from backend.core.gemini_html_refiner import refine_html
+                html = refine_html(html, original_path=path, doc_type=ext)
+                gemini_refined = True
+            except Exception as e:
+                logger.warning("Gemini refinement failed for %s: %s", stem, e)
+
+        output_files = []
+        if want_html:
+            html_path = file_out / f"{stem}.html"
+            html_path.write_text(html, encoding="utf-8")
+            output_files.append(str(html_path))
+
+        if want_md:
+            md = _basic_html_to_markdown(html)
+            md_path = file_out / f"{stem}.md"
+            md_path.write_text(md, encoding="utf-8")
+            output_files.append(str(md_path))
+
+        final_results.append({
+            "input_path": path,
+            "output_files": output_files,
+            "engine": "libreoffice",
+            "gemini_refined": gemini_refined,
+            "elapsed_seconds": lo.get("elapsed_seconds", 0),
+        })
+
+    elapsed = round(time.time() - start, 2)
+    succeeded = sum(1 for r in final_results if "error" not in r)
+    failed = len(final_results) - succeeded
+
+    return {
+        "results": final_results,
+        "total": len(input_paths),
+        "succeeded": succeeded,
+        "failed": failed,
+        "elapsed_seconds": elapsed,
+        "files_per_second": round(len(input_paths) / elapsed, 2) if elapsed > 0 else 0,
+    }
 
 
 @app.post("/api/convert/document")

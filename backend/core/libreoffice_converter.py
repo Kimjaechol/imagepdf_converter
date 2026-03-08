@@ -1,7 +1,7 @@
-"""LibreOffice headless document converter.
+"""LibreOffice headless document converter with parallel processing.
 
 Converts DOCX, HWPX, XLSX, PPTX to HTML using LibreOffice in headless mode.
-Optionally applies Gemini-based post-processing to clean up the output.
+Multiple instances run in parallel with isolated user profiles.
 
 Requirements:
   - LibreOffice installed (soffice command available)
@@ -20,19 +20,23 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# soffice binary detection
+# ---------------------------------------------------------------------------
+
 def _find_soffice() -> str | None:
     """Locate the soffice binary."""
-    # Check PATH first
     found = shutil.which("soffice")
     if found:
         return found
 
-    # Common locations
     candidates = []
     system = platform.system()
     if system == "Darwin":
@@ -86,17 +90,50 @@ def is_libreoffice_available() -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Optimal worker count
+# ---------------------------------------------------------------------------
+
+def _detect_max_workers() -> int:
+    """Detect optimal number of parallel LibreOffice instances.
+
+    Heuristic: min(CPU cores, RAM_GB // 1, 8).
+    Each LibreOffice instance uses ~200-500MB RAM.
+    """
+    cpu_count = os.cpu_count() or 4
+
+    try:
+        import psutil
+        ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+        # Reserve 2GB for OS + app, allow ~0.5GB per LO instance
+        ram_workers = max(1, int((ram_gb - 2) / 0.5))
+    except ImportError:
+        # No psutil — estimate conservatively
+        ram_workers = cpu_count
+
+    workers = min(cpu_count, ram_workers, 8)
+    return max(1, workers)
+
+
+# ---------------------------------------------------------------------------
+# Single file conversion
+# ---------------------------------------------------------------------------
+
 def convert_to_html(
     input_path: str,
     output_dir: str | None = None,
     timeout: int = 120,
 ) -> dict:
-    """Convert a document to HTML using LibreOffice headless.
+    """Convert a single document to HTML using LibreOffice headless.
+
+    Each call gets its own user profile directory so multiple instances
+    can run in parallel without conflicts.
 
     Args:
-        input_path: Path to the input document
-        output_dir: Output directory (defaults to temp dir)
-        timeout: Maximum seconds to wait for conversion
+        input_path: Path to the input document.
+        output_dir: Where to save the final HTML + images. If None, only
+                    returns the HTML string without saving.
+        timeout: Maximum seconds to wait for soffice.
 
     Returns:
         dict with keys: html, images, output_path, elapsed_seconds
@@ -107,13 +144,9 @@ def convert_to_html(
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    ext = input_path.suffix.lower()
     stem = input_path.stem
 
-    # Use a temporary directory for conversion output to avoid conflicts
     with tempfile.TemporaryDirectory(prefix="lo_convert_") as tmpdir:
-        # Build the soffice command
-        # Use a unique user profile to allow parallel conversions
         user_profile = os.path.join(tmpdir, "profile")
         cmd = [
             soffice,
@@ -147,52 +180,52 @@ def convert_to_html(
         if result.returncode != 0:
             logger.error("soffice stderr: %s", result.stderr)
             raise RuntimeError(
-                f"LibreOffice conversion failed (exit {result.returncode}): {result.stderr[:500]}"
+                f"LibreOffice conversion failed (exit {result.returncode}): "
+                f"{result.stderr[:500]}"
             )
 
         # Find the output HTML file
         html_file = Path(tmpdir) / f"{stem}.html"
         if not html_file.exists():
-            # LibreOffice may produce a slightly different name
             html_files = list(Path(tmpdir).glob("*.html"))
             if html_files:
                 html_file = html_files[0]
             else:
                 raise RuntimeError(
-                    f"LibreOffice produced no HTML output. stdout: {result.stdout[:300]}"
+                    f"LibreOffice produced no HTML output. "
+                    f"stdout: {result.stdout[:300]}"
                 )
 
         html_content = html_file.read_text(encoding="utf-8", errors="replace")
 
-        # Collect any generated images (LibreOffice puts them alongside the HTML)
+        # Collect generated images
         images: list[tuple[str, bytes]] = []
         for img_file in Path(tmpdir).iterdir():
-            if img_file.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp", ".webp"):
+            if img_file.suffix.lower() in (
+                ".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp", ".webp",
+            ):
                 images.append((img_file.name, img_file.read_bytes()))
 
-        # If output_dir specified, copy files there
+        # Persist to output_dir if requested
         final_output_path = None
         if output_dir:
             out = Path(output_dir)
             out.mkdir(parents=True, exist_ok=True)
 
-            # Save HTML
             final_html = out / f"{stem}.html"
             final_html.write_text(html_content, encoding="utf-8")
             final_output_path = str(final_html)
 
-            # Save images
             if images:
                 img_dir = out / "images"
                 img_dir.mkdir(exist_ok=True)
                 for img_name, img_data in images:
                     (img_dir / img_name).write_bytes(img_data)
-                # Update image references in HTML
                 html_content = _rewrite_image_paths(html_content, "images")
                 final_html.write_text(html_content, encoding="utf-8")
 
         logger.info(
-            "LibreOffice conversion complete: %s → HTML (%.1fs, %d images)",
+            "LibreOffice done: %s (%.1fs, %d images)",
             input_path.name, elapsed, len(images),
         )
 
@@ -204,12 +237,111 @@ def convert_to_html(
         }
 
 
+# ---------------------------------------------------------------------------
+# Batch / parallel conversion
+# ---------------------------------------------------------------------------
+
+def convert_batch(
+    input_paths: list[str],
+    output_dir: str,
+    max_workers: int | None = None,
+    timeout_per_file: int = 120,
+    progress_callback: Callable[[str, int, int], None] | None = None,
+) -> list[dict]:
+    """Convert multiple documents in parallel using a LibreOffice worker pool.
+
+    Each worker spawns its own soffice process with an isolated user profile,
+    so there is zero contention between instances.
+
+    Args:
+        input_paths: List of document file paths.
+        output_dir: Root output directory. Each file gets a subdirectory
+                    named after its stem to avoid collisions.
+        max_workers: Number of parallel LibreOffice instances.
+                     Auto-detected if None.
+        timeout_per_file: Seconds before a single conversion is killed.
+        progress_callback: Optional ``fn(filename, completed, total)``
+                           called after each file finishes.
+
+    Returns:
+        List of result dicts (one per file), in the same order as
+        *input_paths*.  Failed files have an ``"error"`` key.
+    """
+    if not input_paths:
+        return []
+
+    if max_workers is None:
+        max_workers = _detect_max_workers()
+    # Never more workers than files
+    max_workers = min(max_workers, len(input_paths))
+
+    logger.info(
+        "Batch converting %d documents with %d parallel workers",
+        len(input_paths), max_workers,
+    )
+
+    out_root = Path(output_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    total = len(input_paths)
+    completed = 0
+    results: dict[int, dict] = {}
+
+    def _do_one(idx: int, path: str) -> tuple[int, dict]:
+        stem = Path(path).stem
+        # Per-file output subdirectory
+        file_out = out_root / stem
+        file_out.mkdir(parents=True, exist_ok=True)
+        try:
+            return idx, convert_to_html(path, str(file_out), timeout_per_file)
+        except Exception as exc:
+            logger.error("Failed to convert %s: %s", path, exc)
+            return idx, {
+                "error": str(exc),
+                "input_path": path,
+                "html": None,
+                "images": [],
+                "output_path": None,
+                "elapsed_seconds": 0,
+            }
+
+    start_all = time.time()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_do_one, i, p): i
+            for i, p in enumerate(input_paths)
+        }
+        for future in as_completed(futures):
+            idx, result = future.result()
+            results[idx] = result
+            completed += 1
+            fname = Path(input_paths[idx]).name
+            if progress_callback:
+                progress_callback(fname, completed, total)
+            logger.info(
+                "Batch progress: %d/%d – %s", completed, total, fname,
+            )
+
+    total_elapsed = time.time() - start_all
+    logger.info(
+        "Batch complete: %d files in %.1fs (%.1f files/sec)",
+        total, total_elapsed, total / total_elapsed if total_elapsed > 0 else 0,
+    )
+
+    # Return in original order
+    return [results[i] for i in range(total)]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _rewrite_image_paths(html: str, img_dir: str) -> str:
-    """Rewrite image src paths in LibreOffice-generated HTML to point to img_dir/."""
+    """Rewrite image src paths to point to *img_dir*/."""
     def _replace(match):
         src = match.group(1)
-        # Only rewrite local file references (not URLs)
-        if src.startswith("http://") or src.startswith("https://") or src.startswith("data:"):
+        if src.startswith(("http://", "https://", "data:")):
             return match.group(0)
         filename = Path(src).name
         return f'src="{img_dir}/{filename}"'
@@ -218,26 +350,20 @@ def _rewrite_image_paths(html: str, img_dir: str) -> str:
 
 
 def clean_libreoffice_html(html: str) -> str:
-    """Clean up LibreOffice's verbose HTML output.
-
-    LibreOffice generates very verbose HTML with inline styles.
-    This function simplifies it while preserving structure and formatting.
-    """
-    # Remove XML declaration and DOCTYPE
+    """Strip LibreOffice-specific noise from HTML while keeping structure."""
+    # XML declaration / DOCTYPE
     html = re.sub(r'<\?xml[^?]*\?>\s*', '', html)
 
-    # Remove LibreOffice-specific meta tags (but keep charset)
+    # LO meta tags
     html = re.sub(r'<meta\s+name="generator"[^>]*>', '', html)
     html = re.sub(r'<meta\s+name="created"[^>]*>', '', html)
     html = re.sub(r'<meta\s+name="changed"[^>]*>', '', html)
 
-    # Remove empty paragraphs (common LO artifact)
+    # Empty paragraphs / spans
     html = re.sub(r'<p[^>]*>\s*</p>', '', html)
-
-    # Remove empty spans
     html = re.sub(r'<span[^>]*>\s*</span>', '', html)
 
-    # Simplify excessive whitespace in tags
+    # Excessive whitespace before >
     html = re.sub(r'\s+>', '>', html)
 
     return html
