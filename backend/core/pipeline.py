@@ -281,17 +281,15 @@ class Pipeline:
     def _measure_upload_bandwidth(
         self, sample_image_path: str, api_key: str,
     ) -> tuple[float | None, float]:
-        """Measure pure upload speed via Gemini File API (free, no tokens).
+        """Measure upload speed by sending a small Gemini generate request.
 
-        Uploads a sample image to Gemini's file storage, measures the
-        elapsed time, then immediately deletes the file.  This gives
-        the exact upload bandwidth to the same Google servers that will
-        handle the real batches — with zero inference overhead and zero
-        API cost.
+        Sends a sample image via the gemini_client REST API with a
+        trivial prompt, measures the round-trip time, and estimates
+        pure upload bandwidth by subtracting estimated inference time.
 
         Returns (upload_speed_MB_s | None, image_size_MB).
         """
-        import google.generativeai as genai
+        from backend.core import gemini_client
 
         avg_img_mb = 3.0
 
@@ -302,25 +300,33 @@ class Pipeline:
             img_size_bytes = os.path.getsize(sample_image_path)
             avg_img_mb = img_size_bytes / (1024 * 1024)
 
-            genai.configure(api_key=api_key)
+            with open(sample_image_path, "rb") as f:
+                image_data = f.read()
 
-            # Pure upload — no model inference, no token cost
+            # Send a minimal request to measure upload bandwidth.
+            # The inference overhead is small (~0.5-1s) compared to
+            # upload time for multi-MB images.
             start = time.time()
-            uploaded_file = genai.upload_file(sample_image_path)
+            gemini_client.generate_with_image(
+                text_prompt="Reply with OK.",
+                image_data=image_data,
+                mime_type="image/png",
+                model=self.cfg.gemini_model,
+                api_key=api_key,
+                max_output_tokens=8,
+                timeout=60,
+            )
             elapsed = time.time() - start
 
-            # Clean up immediately
-            try:
-                genai.delete_file(uploaded_file.name)
-            except Exception:
-                pass  # non-critical; files auto-expire after 48h
-
-            speed = avg_img_mb / max(elapsed, 0.01)
+            # Subtract estimated inference overhead to isolate upload time
+            est_inference_sec = 1.0
+            upload_elapsed = max(elapsed - est_inference_sec, 0.1)
+            speed = avg_img_mb / upload_elapsed
 
             logger.info(
-                "Bandwidth probe (File API): %.2fMB uploaded in %.2fs "
-                "→ %.1f MB/s",
-                avg_img_mb, elapsed, speed,
+                "Bandwidth probe (REST): %.2fMB uploaded in %.2fs "
+                "(round-trip %.2fs - ~%.1fs inference) → %.1f MB/s",
+                avg_img_mb, upload_elapsed, elapsed, est_inference_sec, speed,
             )
             return speed, avg_img_mb
 

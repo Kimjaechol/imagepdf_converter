@@ -27,7 +27,8 @@ _MAX_CHUNK_CHARS = 40_000
 
 def is_gemini_available() -> bool:
     """Check if Gemini API key is configured."""
-    return bool(os.environ.get("GEMINI_API_KEY", ""))
+    from backend.core.gemini_client import is_available
+    return is_available()
 
 
 def refine_html(
@@ -51,32 +52,26 @@ def refine_html(
     Returns:
         Refined HTML string
     """
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    from backend.core.gemini_client import get_api_key
+
+    api_key = get_api_key()
     if not api_key:
         logger.info("Gemini API key not configured, skipping HTML refinement")
         return html
 
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-    except ImportError:
-        logger.warning("google-generativeai not installed, skipping refinement")
-        return html
-
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
-    model = genai.GenerativeModel(model_name)
 
     doc_name = Path(original_path).name if original_path else "document"
 
     # For small documents, process in one shot
     if len(html) <= _MAX_CHUNK_CHARS:
-        return _refine_chunk(model, html, doc_name, doc_type)
+        return _refine_chunk(model_name, api_key, html, doc_name, doc_type)
 
     # For large documents, split at block boundaries and process chunks
-    return _refine_large_html(model, html, doc_name, doc_type)
+    return _refine_large_html(model_name, api_key, html, doc_name, doc_type)
 
 
-def _refine_chunk(model, html: str, doc_name: str, doc_type: str) -> str:
+def _refine_chunk(model_name: str, api_key: str, html: str, doc_name: str, doc_type: str) -> str:
     """Refine a single chunk of PDF-extracted HTML."""
     prompt = f"""You are an HTML document quality reviewer. A PDF file named "{doc_name}" was converted to HTML by Upstage Document Parse (1st pass).
 
@@ -129,8 +124,10 @@ HTML to review:
 {html}"""
 
     try:
-        response = model.generate_content(prompt)
-        refined = response.text.strip()
+        from backend.core.gemini_client import generate_content
+        refined = generate_content(
+            prompt, model=model_name, api_key=api_key,
+        ).strip()
 
         # Remove code fences if Gemini added them
         if refined.startswith("```html"):
@@ -161,7 +158,7 @@ HTML to review:
         return html
 
 
-def _refine_large_html(model, html: str, doc_name: str, doc_type: str) -> str:
+def _refine_large_html(model_name: str, api_key: str, html: str, doc_name: str, doc_type: str) -> str:
     """Refine a large HTML document by splitting into chunks."""
     # Extract head and body
     body_start = html.find("<body")
@@ -170,7 +167,7 @@ def _refine_large_html(model, html: str, doc_name: str, doc_type: str) -> str:
     if body_start == -1 or body_end == -1:
         # No body tags, try to process as single chunk anyway
         if len(html) <= _MAX_CHUNK_CHARS * 2:
-            return _refine_chunk(model, html, doc_name, doc_type)
+            return _refine_chunk(model_name, api_key, html, doc_name, doc_type)
         return html
 
     body_tag_end = html.index(">", body_start) + 1
@@ -184,7 +181,7 @@ def _refine_large_html(model, html: str, doc_name: str, doc_type: str) -> str:
     refined_chunks = []
     for i, chunk in enumerate(chunks):
         logger.info("Refining chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk))
-        refined = _refine_chunk(model, chunk, doc_name, doc_type)
+        refined = _refine_chunk(model_name, api_key, chunk, doc_name, doc_type)
         refined_chunks.append(refined)
 
     return head_part + "\n".join(refined_chunks) + tail_part

@@ -562,12 +562,9 @@ def _translate_html_sync(
     html: str, source_language: str, target_language: str, api_key: str,
 ) -> str:
     """Translate HTML using Gemini, preserving all HTML structure."""
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key)
+    from backend.core.gemini_client import generate_content
 
     cfg = _get_config()
-    model = genai.GenerativeModel(cfg.gemini_model)
 
     src = source_language or "auto-detected"
     lang_names = {
@@ -629,8 +626,7 @@ CRITICAL RULES:
 HTML to translate:
 {chunk}"""
 
-        response = model.generate_content(prompt)
-        translated = response.text.strip()
+        translated = generate_content(prompt, model=cfg.gemini_model, api_key=api_key).strip()
 
         # Remove markdown code fences if Gemini added them
         if translated.startswith("```html"):

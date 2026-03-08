@@ -195,14 +195,11 @@ class UpstageGeminiRefiner:
             return pages, 0, 0
 
         try:
-            import google.generativeai as genai
-            from PIL import Image
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.config.gemini_model)
+            from backend.core.gemini_client import generate_content, generate_with_images
+            import mimetypes
 
             # Build multimodal prompt: images + HTML representation
-            parts: list[Any] = []
+            images_list: list[tuple[bytes, str]] = []
 
             # Add original page images
             pages_html_desc = []
@@ -211,9 +208,9 @@ class UpstageGeminiRefiner:
                 img_path = page_images.get(page_idx)
 
                 if img_path and os.path.exists(img_path):
-                    img = Image.open(img_path)
-                    parts.append(img)
-                    parts.append(f"[Above: Original page {page_idx + 1} image]")
+                    mime = mimetypes.guess_type(img_path)[0] or "image/png"
+                    with open(img_path, "rb") as f:
+                        images_list.append((f.read(), mime))
 
                 # Build HTML representation of extracted blocks
                 page_html = self._blocks_to_html_desc(page)
@@ -230,16 +227,22 @@ class UpstageGeminiRefiner:
             prompt = self._build_visual_comparison_prompt(
                 pages_html_desc, translate_instruction,
             )
-            parts.append(prompt)
 
             # Call Gemini with images + text
-            response = model.generate_content(
-                parts,
-                generation_config={"max_output_tokens": 8192},
-            )
+            if images_list:
+                response_text = generate_with_images(
+                    prompt, images_list,
+                    model=self.config.gemini_model, api_key=api_key,
+                    max_output_tokens=8192,
+                )
+            else:
+                response_text = generate_content(
+                    prompt, model=self.config.gemini_model, api_key=api_key,
+                    max_output_tokens=8192,
+                )
 
             # Parse response and apply corrections
-            corrections = self._parse_visual_response(response.text)
+            corrections = self._parse_visual_response(response_text)
             if corrections:
                 num_corrections, num_rejected = self._apply_visual_corrections(
                     corrections, pages,

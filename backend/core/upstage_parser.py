@@ -3,7 +3,8 @@
 Handles both digital and scanned (image) PDFs. Returns structured LayoutBlock
 objects that can be fed into the Gemini refinement stage.
 
-API: https://api.upstage.ai/v1/document-ai/document-parse
+API: https://api.upstage.ai/v1/document-digitization
+Docs: https://console.upstage.ai/api/parse/document-parsing
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from backend.models.schema import (
 
 logger = logging.getLogger(__name__)
 
-_UPSTAGE_API_URL = "https://api.upstage.ai/v1/document-ai/document-parse"
+_UPSTAGE_API_URL = "https://api.upstage.ai/v1/document-digitization"
 
 # Maximum pages per single Upstage API call.
 # Upstage Document Parse handles multi-page PDFs but large docs should be chunked.
@@ -180,10 +181,11 @@ class UpstageDocumentParser:
                             "document": (pdf_chunk_path.name, f, "application/pdf"),
                         },
                         data={
-                            "ocr": "auto",
-                            "output_formats": '["json", "html"]',
                             "model": "document-parse",
-                            "page_separation": "true",
+                            "ocr": "force" if mode == "enhanced" else "auto",
+                            "mode": mode if mode in ("standard", "enhanced", "auto") else "auto",
+                            "output_formats": "['html']",
+                            "coordinates": "true",
                         },
                         timeout=300,  # 5 min per chunk
                     )

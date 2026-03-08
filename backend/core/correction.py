@@ -341,14 +341,11 @@ Return the corrected text with [BLOCK:xxx] markers preserved."""
 
     def _call_gemini(self, prompt: str) -> str | None:
         try:
-            import google.generativeai as genai
+            from backend.core.gemini_client import generate_content
             api_key = os.environ.get("GEMINI_API_KEY", "")
             if not api_key:
                 return None
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.gemini_model)
-            response = model.generate_content(prompt)
-            return response.text
+            return generate_content(prompt, model=self.gemini_model, api_key=api_key)
         except Exception as exc:
             logger.error("Gemini correction failed: %s", exc)
             return None
