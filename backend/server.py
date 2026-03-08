@@ -159,7 +159,7 @@ class DocumentConvertRequest(BaseModel):
     input_path: str
     output_dir: str
     output_formats: list[str] = ["html", "markdown"]
-    refine_with_gemini: bool = True  # Enable Gemini post-processing
+    refine_with_gemini: bool = True  # Enable Gemini post-processing (PDF only)
     translate: bool = False
     source_language: str = ""
     target_language: str = "ko"
@@ -169,8 +169,7 @@ class BatchDocumentConvertRequest(BaseModel):
     input_paths: list[str]
     output_dir: str
     output_formats: list[str] = ["html", "markdown"]
-    refine_with_gemini: bool = True
-    max_workers: int | None = None  # Auto-detect if None
+    refine_with_gemini: bool = True  # For PDF files in batch
 
 
 class JobStatus(BaseModel):
@@ -648,45 +647,45 @@ HTML to translate:
 
 
 # ---------------------------------------------------------------------------
-# Document Conversion (LibreOffice headless)
+# Document Conversion (한컴 DocsConverter for non-PDF)
 # ---------------------------------------------------------------------------
 
-@app.get("/api/libreoffice/status")
-async def libreoffice_status():
-    """Check if LibreOffice is available and report parallel capacity."""
+@app.get("/api/hancom/status")
+async def hancom_status():
+    """Check if Hancom DocsConverter server is reachable."""
     try:
-        from backend.core.libreoffice_converter import (
-            is_libreoffice_available,
-            get_soffice_path,
-            _detect_max_workers,
+        from backend.core.hancom_converter import (
+            is_hancom_available,
+            _hancom_base_url,
+            SUPPORTED_EXTENSIONS,
         )
-        available = is_libreoffice_available()
-        path = get_soffice_path() if available else None
-        workers = _detect_max_workers() if available else 0
-        return {"available": available, "path": path, "max_workers": workers}
+        available = is_hancom_available()
+        return {
+            "available": available,
+            "server_url": _hancom_base_url(),
+            "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
+        }
     except Exception:
-        return {"available": False, "path": None, "max_workers": 0}
+        return {"available": False, "server_url": None, "supported_extensions": []}
 
 
 @app.post("/api/convert/document/batch")
 async def convert_document_batch(req: BatchDocumentConvertRequest):
-    """Batch-convert multiple documents in parallel using LibreOffice.
+    """Batch-convert multiple documents using Hancom DocsConverter (non-PDF).
 
-    Each file gets its own soffice process with an isolated user profile.
-    The number of parallel workers auto-scales to CPU cores and available RAM.
-    Optionally applies Gemini post-processing to each file afterwards.
+    Files are uploaded to the remote Hancom server and converted via REST API.
     """
     if not req.input_paths:
         return {"results": [], "total": 0}
 
     # Validate all files exist and have supported extensions
-    supported = {"docx", "hwpx", "xlsx", "pptx"}
+    from backend.core.hancom_converter import SUPPORTED_EXTENSIONS
     for p in req.input_paths:
         fp = Path(p)
         if not fp.exists():
             raise HTTPException(404, f"File not found: {p}")
         ext = fp.suffix.lower().lstrip(".")
-        if ext not in supported:
+        if ext not in SUPPORTED_EXTENSIONS:
             raise HTTPException(
                 400, f"Unsupported format: {fp.name} (.{ext})"
             )
@@ -698,8 +697,6 @@ async def convert_document_batch(req: BatchDocumentConvertRequest):
             req.input_paths,
             req.output_dir,
             req.output_formats,
-            req.refine_with_gemini,
-            req.max_workers,
         )
         return result
     except Exception as e:
@@ -711,58 +708,44 @@ def _batch_convert_sync(
     input_paths: list[str],
     output_dir: str,
     output_formats: list[str],
-    refine_with_gemini: bool,
-    max_workers: int | None,
 ) -> dict:
-    """Run LibreOffice batch conversion, then optionally Gemini-refine each."""
-    from backend.core.libreoffice_converter import convert_batch, clean_libreoffice_html
+    """Run Hancom batch conversion, then generate markdown for each."""
+    from backend.core.hancom_converter import convert_batch, clean_hancom_html
 
     start = time.time()
 
-    # Step 1: Parallel LibreOffice conversion
-    lo_results = convert_batch(
-        input_paths, output_dir,
-        max_workers=max_workers,
-    )
+    # Step 1: Hancom DocsConverter conversion
+    hancom_results = convert_batch(input_paths, output_dir)
 
-    # Step 2: Post-process each result (cleanup + optional Gemini + markdown)
+    # Step 2: Post-process each result (cleanup + markdown)
     final_results = []
     want_html = "html" in output_formats
     want_md = "markdown" in output_formats or "md" in output_formats
 
-    for i, lo in enumerate(lo_results):
+    for i, hc in enumerate(hancom_results):
         path = input_paths[i]
         stem = Path(path).stem
-        ext = Path(path).suffix.lower().lstrip(".")
         file_out = Path(output_dir) / stem
 
-        if lo.get("error"):
+        if hc.get("error"):
             final_results.append({
                 "input_path": path,
-                "error": lo["error"],
+                "error": hc["error"],
                 "output_files": [],
             })
             continue
 
-        html = clean_libreoffice_html(lo["html"])
-
-        # Gemini refinement
-        gemini_refined = False
-        if refine_with_gemini and os.environ.get("GEMINI_API_KEY"):
-            try:
-                from backend.core.gemini_html_refiner import refine_html
-                html = refine_html(html, original_path=path, doc_type=ext)
-                gemini_refined = True
-            except Exception as e:
-                logger.warning("Gemini refinement failed for %s: %s", stem, e)
+        html = clean_hancom_html(hc["html"])
 
         output_files = []
         if want_html:
+            file_out.mkdir(parents=True, exist_ok=True)
             html_path = file_out / f"{stem}.html"
             html_path.write_text(html, encoding="utf-8")
             output_files.append(str(html_path))
 
         if want_md:
+            file_out.mkdir(parents=True, exist_ok=True)
             md = _basic_html_to_markdown(html)
             md_path = file_out / f"{stem}.md"
             md_path.write_text(md, encoding="utf-8")
@@ -771,9 +754,8 @@ def _batch_convert_sync(
         final_results.append({
             "input_path": path,
             "output_files": output_files,
-            "engine": "libreoffice",
-            "gemini_refined": gemini_refined,
-            "elapsed_seconds": lo.get("elapsed_seconds", 0),
+            "engine": "hancom",
+            "elapsed_seconds": hc.get("elapsed_seconds", 0),
         })
 
     elapsed = round(time.time() - start, 2)
@@ -792,17 +774,19 @@ def _batch_convert_sync(
 
 @app.post("/api/convert/document")
 async def convert_document(req: DocumentConvertRequest):
-    """Convert a document (DOCX/HWPX/XLSX/PPTX) to HTML using LibreOffice.
+    """Convert a document to HTML.
 
-    Optionally applies Gemini post-processing for quality assurance.
+    Non-PDF (HWP/HWPX/DOC/DOCX/XLS/XLSX/PPT/PPTX): uses 한컴 DocsConverter.
     """
     input_path = Path(req.input_path)
     if not input_path.exists():
         raise HTTPException(404, f"File not found: {req.input_path}")
 
     ext = input_path.suffix.lower().lstrip(".")
-    if ext not in ("docx", "hwpx", "xlsx", "pptx"):
-        raise HTTPException(400, f"Unsupported format for LibreOffice conversion: .{ext}")
+
+    from backend.core.hancom_converter import SUPPORTED_EXTENSIONS
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported format: .{ext}. Use /api/convert for PDFs.")
 
     output_dir = Path(req.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -814,7 +798,6 @@ async def convert_document(req: DocumentConvertRequest):
             str(input_path),
             str(output_dir),
             req.output_formats,
-            req.refine_with_gemini,
             req.translate,
             req.source_language,
             req.target_language,
@@ -835,37 +818,25 @@ def _convert_document_sync(
     input_path: str,
     output_dir: str,
     output_formats: list[str],
-    refine_with_gemini: bool,
     translate: bool,
     source_language: str,
     target_language: str,
 ) -> dict:
-    """Synchronous document conversion pipeline."""
-    from backend.core.libreoffice_converter import convert_to_html, clean_libreoffice_html
+    """Synchronous document conversion via Hancom DocsConverter."""
+    from backend.core.hancom_converter import convert_to_html, clean_hancom_html
 
     stem = Path(input_path).stem
-    ext = Path(input_path).suffix.lower().lstrip(".")
 
-    # Step 1: LibreOffice conversion
-    lo_result = convert_to_html(input_path, output_dir)
-    html = lo_result["html"]
-    images = lo_result["images"]
-    elapsed = lo_result["elapsed_seconds"]
+    # Step 1: Hancom DocsConverter conversion
+    hc_result = convert_to_html(input_path, output_dir)
+    html = hc_result["html"]
+    images = hc_result["images"]
+    elapsed = hc_result["elapsed_seconds"]
 
     # Step 2: Basic cleanup
-    html = clean_libreoffice_html(html)
+    html = clean_hancom_html(html)
 
-    # Step 3: Gemini refinement (optional)
-    gemini_refined = False
-    if refine_with_gemini and os.environ.get("GEMINI_API_KEY"):
-        try:
-            from backend.core.gemini_html_refiner import refine_html
-            html = refine_html(html, original_path=input_path, doc_type=ext)
-            gemini_refined = True
-        except Exception as e:
-            logger.warning("Gemini refinement failed, using LibreOffice output: %s", e)
-
-    # Step 4: Translation (optional)
+    # Step 3: Translation (optional)
     translated = False
     if translate and os.environ.get("GEMINI_API_KEY"):
         try:
@@ -875,7 +846,7 @@ def _convert_document_sync(
         except Exception as e:
             logger.warning("Translation failed: %s", e)
 
-    # Step 5: Save final HTML
+    # Step 4: Save final HTML
     output_files = []
     want_html = "html" in output_formats
     want_md = "markdown" in output_formats or "md" in output_formats
@@ -885,14 +856,13 @@ def _convert_document_sync(
         html_path.write_text(html, encoding="utf-8")
         output_files.append(str(html_path))
 
-    # Step 6: Generate Markdown
+    # Step 5: Generate Markdown
     markdown = None
     if want_md:
         from backend.core.md_renderer import html_to_markdown
         try:
             markdown = html_to_markdown(html)
         except Exception:
-            # Fallback: basic conversion
             markdown = _basic_html_to_markdown(html)
         md_path = Path(output_dir) / f"{stem}.md"
         md_path.write_text(markdown, encoding="utf-8")
@@ -912,8 +882,7 @@ def _convert_document_sync(
         "page_count": None,
         "title": stem,
         "author": None,
-        "engine": "libreoffice",
-        "gemini_refined": gemini_refined,
+        "engine": "hancom",
         "translated": translated,
         "elapsed_seconds": elapsed,
     }

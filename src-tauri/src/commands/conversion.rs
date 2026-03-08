@@ -136,8 +136,9 @@ pub async fn convert_document(
     let tgt_lang = target_language.unwrap_or_else(|| "ko".to_string());
 
     match ext.as_str() {
-        // Non-PDF documents: try LibreOffice (Python backend) first, fallback to Rust-native
-        "docx" | "hwpx" | "xlsx" | "pptx" => {
+        // Non-PDF documents: use Hancom DocsConverter via Python backend,
+        // fallback to Rust-native for DOCX/HWPX/XLSX/PPTX only
+        "hwp" | "hwpx" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => {
             let output_formats = formats.unwrap_or_else(|| vec!["html".to_string(), "markdown".to_string()]);
             let out_dir = output_dir.unwrap_or_else(|| {
                 std::path::Path::new(&input_path)
@@ -147,25 +148,33 @@ pub async fn convert_document(
                     .to_string()
             });
 
-            // Try LibreOffice via Python backend first (higher quality)
+            // Try Hancom DocsConverter via Python backend first
             let backend_healthy = crate::backend::process::health_check().await;
             if backend_healthy {
-                let lo_result = convert_document_via_backend(
+                let hc_result = convert_document_via_backend(
                     &input_path, &out_dir, &output_formats,
                     do_translate, &src_lang, &tgt_lang,
                 ).await;
 
-                if let Ok(result) = lo_result {
+                if let Ok(result) = hc_result {
                     return Ok(result);
                 }
-                // If LibreOffice failed, fall through to Rust-native
                 tracing::warn!(
-                    "LibreOffice conversion failed, falling back to Rust-native: {}",
-                    lo_result.err().unwrap_or_default()
+                    "Hancom conversion failed, falling back to Rust-native: {}",
+                    hc_result.err().unwrap_or_default()
                 );
             }
 
-            // Fallback: Rust-native converter
+            // Fallback: Rust-native converter (only for formats it supports)
+            let rust_supported = matches!(ext.as_str(), "docx" | "hwpx" | "xlsx" | "pptx");
+            if !rust_supported {
+                return Err(format!(
+                    "Hancom DocsConverter is unavailable and .{} is not supported by the fallback converter. \
+                     Check that the Python backend is running.",
+                    ext
+                ));
+            }
+
             tracing::info!("Using Rust-native converter for {}", ext);
             let mut result =
                 crate::document::converter::convert_file(&input_path, &out_dir, &output_formats)
@@ -242,7 +251,7 @@ pub async fn convert_document(
     }
 }
 
-/// Call the Python backend's /api/convert/document endpoint (LibreOffice + Gemini)
+/// Call the Python backend's /api/convert/document endpoint (Hancom DocsConverter)
 async fn convert_document_via_backend(
     input_path: &str,
     output_dir: &str,
@@ -269,17 +278,17 @@ async fn convert_document_via_backend(
         .timeout(std::time::Duration::from_secs(300))
         .send()
         .await
-        .map_err(|e| format!("LibreOffice backend request failed: {}", e))?;
+        .map_err(|e| format!("Document conversion backend request failed: {}", e))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("LibreOffice conversion failed ({}): {}", status, body));
+        return Err(format!("Document conversion failed ({}): {}", status, body));
     }
 
     resp.json::<serde_json::Value>()
         .await
-        .map_err(|e| format!("Failed to parse LibreOffice response: {}", e))
+        .map_err(|e| format!("Failed to parse conversion response: {}", e))
 }
 
 /// Call the Python backend's /api/translate-html endpoint

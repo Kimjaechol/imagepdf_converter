@@ -227,7 +227,7 @@ function handleFileSelected(path) {
   const fileInfo = $("#file-info");
   if (fileInfo) {
     const icon = getFileIcon(ext);
-    const engine = api.isPdfFormat(ext) ? "AI 파이프라인" : "LibreOffice + AI 보정";
+    const engine = api.isPdfFormat(ext) ? "Upstage + Gemini AI" : "한컴 DocsConverter";
     fileInfo.innerHTML = `
       <div class="file-card">
         <span class="file-icon">${icon}</span>
@@ -366,8 +366,8 @@ async function convertSingle() {
         pollJobProgress(jobId);
       }
     } else {
-      // Direct result (LibreOffice or Rust-native)
-      const engine = result.engine === "libreoffice" ? "LibreOffice" : "네이티브";
+      // Direct result (Hancom or Rust-native)
+      const engine = result.engine === "hancom" ? "한컴 DocsConverter" : "네이티브";
       const refined = result.gemini_refined ? " + AI 보정" : "";
       updateProgress(100, "변환 완료!");
       showResults(result);

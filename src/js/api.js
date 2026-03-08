@@ -22,12 +22,12 @@ export async function selectDocumentFile() {
   return await openDialog({
     multiple: false,
     filters: [
-      { name: "지원 문서", extensions: ["pdf", "docx", "hwpx", "xlsx", "pptx"] },
+      { name: "지원 문서", extensions: ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"] },
       { name: "PDF", extensions: ["pdf"] },
-      { name: "Word", extensions: ["docx"] },
-      { name: "한글", extensions: ["hwpx"] },
-      { name: "Excel", extensions: ["xlsx"] },
-      { name: "PowerPoint", extensions: ["pptx"] },
+      { name: "한글", extensions: ["hwp", "hwpx"] },
+      { name: "Word", extensions: ["doc", "docx"] },
+      { name: "Excel", extensions: ["xls", "xlsx"] },
+      { name: "PowerPoint", extensions: ["ppt", "pptx"] },
     ],
   });
 }
@@ -115,7 +115,7 @@ export async function convertBatch(folderPath, outputDir, formats, recursive) {
 }
 
 // ─── Document Conversion (Unified) ────────────────────
-// Routes to Rust-native (docx/hwpx/xlsx/pptx) or Python pipeline (pdf)
+// Routes to Hancom DocsConverter (non-PDF) or Upstage+Gemini pipeline (PDF)
 export async function convertDocument(inputPath, outputDir, formats, translate, sourceLang, targetLang) {
   return await invoke("convert_document", {
     inputPath: inputPath,
@@ -323,10 +323,14 @@ export function isRustNativeFormat(ext) {
   return ["docx", "hwpx", "xlsx", "pptx"].includes(ext);
 }
 
+export function isHancomFormat(ext) {
+  return ["hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ext);
+}
+
 export function isPdfFormat(ext) {
   return ext === "pdf";
 }
 
 export function isSupportedFormat(ext) {
-  return ["pdf", "docx", "hwpx", "xlsx", "pptx"].includes(ext);
+  return ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ext);
 }

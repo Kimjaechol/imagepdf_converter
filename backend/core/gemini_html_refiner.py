@@ -1,12 +1,15 @@
-"""Gemini-based HTML refinement for LibreOffice output.
+"""Gemini-based HTML refinement for PDF conversion output (2nd pass).
 
-Compares the original document (rendered as images) with LibreOffice HTML output
-and fixes discrepancies. This is the "2nd pass" quality assurance step.
+After the 1st pass (Upstage Document Parse) produces HTML from a PDF,
+this module sends the HTML to Gemini 3.1 Flash-Lite for quality refinement.
 
-Only called when:
-1. The document is complex (tables, mixed formatting, multi-column)
-2. The user has opted for high-quality conversion
-3. A Gemini API key is configured
+Focuses on:
+  1. Heading font sizes and bold/italic accuracy vs original
+  2. Table structure and cell content correctness
+  3. Image placement verification (correct position in document flow)
+  4. Text and number correction (OCR errors, displaced digits)
+
+Only called for PDF files (non-PDF uses Hancom DocsConverter which is already accurate).
 """
 
 from __future__ import annotations
@@ -61,7 +64,7 @@ def refine_html(
         logger.warning("google-generativeai not installed, skipping refinement")
         return html
 
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
     model = genai.GenerativeModel(model_name)
 
     doc_name = Path(original_path).name if original_path else "document"
@@ -75,34 +78,49 @@ def refine_html(
 
 
 def _refine_chunk(model, html: str, doc_name: str, doc_type: str) -> str:
-    """Refine a single chunk of HTML."""
-    prompt = f"""You are an HTML document quality reviewer. A "{doc_type}" file named "{doc_name}" was converted to HTML by LibreOffice.
+    """Refine a single chunk of PDF-extracted HTML."""
+    prompt = f"""You are an HTML document quality reviewer. A PDF file named "{doc_name}" was converted to HTML by Upstage Document Parse (1st pass).
 
-Review and fix the HTML below. Make ONLY these corrections:
+You are performing the 2nd pass quality refinement. Review and fix the HTML below.
+Focus on these FOUR critical areas:
 
-1. TABLE FIXES:
+1. HEADING FONT SIZE AND BOLD VERIFICATION:
+   - Ensure headings (h1-h6) have appropriate font sizes in their style attributes
+   - Main titles should be h1 with larger font-size (≥20px) and font-weight: bold
+   - Section headings should be h2/h3 with medium font-size (14-18px)
+   - If a paragraph looks like a heading (bold, larger text), convert it to proper <hN> tag
+   - Ensure heading hierarchy is logical (h1 > h2 > h3, no level skipping)
+   - Korean heading patterns: "제1장"/"제1편" = h2, "제1절"/"제1관" = h3, "제1조" = h4
+
+2. TABLE STRUCTURE AND CONTENT:
    - Ensure proper <thead>/<tbody> separation
-   - Fix rowspan/colspan if cells are misaligned
-   - Add missing border attributes
-   - Remove empty rows/columns
+   - Fix rowspan/colspan if cells appear misaligned
+   - Verify cell content is in the correct row/column position
+   - Fix merged cells that were incorrectly split
+   - Remove empty rows/columns that don't exist in the original
+   - Ensure numeric data in cells is correct (no displaced digits)
 
-2. HEADING FIXES:
-   - Ensure logical heading hierarchy (h1 > h2 > h3, no skipping)
-   - Convert obviously-headings paragraphs (large bold text) to proper heading tags
+3. IMAGE PLACEMENT:
+   - Verify <img> tags are positioned correctly in the document flow
+   - Images should appear at the same relative position as in the original PDF
+   - Fix broken image src references
+   - Ensure alt text is meaningful
 
-3. LIST FIXES:
-   - Convert sequences of "- item" or "1. item" paragraphs to proper <ul>/<ol>
+4. TEXT AND NUMBER CORRECTION:
+   - Fix OCR errors in text (especially CJK characters)
+   - CRITICAL: Fix displaced numbers/digits caused by MuPDF glyph width bugs
+     Common patterns:
+     - Numbers pushed to end of line: "년도 매출액은 원입니다 2024 1,000,000" → "2024년도 매출액은 1,000,000원입니다"
+     - Article numbers detached: "제 조 (목적) 1" → "제1조 (목적)"
+     - Dates split: "월 일 3 15" → "3월 15일"
+     - Percentage/units displaced: "증가율은 %입니다 5.3" → "증가율은 5.3%입니다"
+   - Fix Korean spacing (띄어쓰기) errors
+   - Do NOT change the VALUE of any number — only fix its POSITION
 
-4. CLEANUP:
-   - Remove empty <p>, <span>, <div> elements
-   - Remove LibreOffice-specific CSS classes that add no value
-   - Simplify redundant inline styles
-   - Fix broken image references
-
-5. PRESERVE:
-   - ALL text content exactly as-is (do NOT rewrite, translate, or summarize)
-   - All meaningful formatting (bold, italic, underline, colors, font sizes)
-   - All images and their positions
+PRESERVE:
+   - ALL text content meaning (do NOT rewrite, translate, or summarize)
+   - All meaningful formatting (bold, italic, underline, colors)
+   - All images and their src attributes
    - Document structure and reading order
 
 CRITICAL: Output ONLY the corrected HTML. No explanation, no code fences.
