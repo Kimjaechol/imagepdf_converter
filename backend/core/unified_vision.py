@@ -22,8 +22,6 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
-
 from backend.models.schema import (
     Alignment,
     BBox,
@@ -302,10 +300,7 @@ class UnifiedVisionProcessor:
             return []
 
         try:
-            import google.generativeai as genai
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.gemini_model)
+            from backend.core.gemini_client import generate_content
 
             # Build TEXT-ONLY prompt (no images!)
             page_infos = []
@@ -330,12 +325,14 @@ class UnifiedVisionProcessor:
             )
 
             # Single text-only call – no images in parts
-            response = model.generate_content(
+            response_text = generate_content(
                 prompt,
-                generation_config={"max_output_tokens": 8192},
+                model=self.gemini_model,
+                api_key=api_key,
+                max_output_tokens=8192,
             )
 
-            return self._parse_unified_response(response.text, page_data_list)
+            return self._parse_unified_response(response_text, page_data_list)
 
         except Exception as exc:
             logger.error("Text-only batch processing failed: %s", exc)
@@ -359,14 +356,10 @@ class UnifiedVisionProcessor:
             return []
 
         try:
-            import google.generativeai as genai
-            from PIL import Image
+            from backend.core.gemini_client import generate_with_images
 
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.gemini_model)
-
-            # Build multimodal prompt: images + text hints
-            parts: list[Any] = []
+            # Build multimodal prompt: collect images + text hints
+            images_list: list[tuple[bytes, str]] = []
 
             page_infos = []
             for pd in page_data_list:
@@ -375,9 +368,14 @@ class UnifiedVisionProcessor:
                 width = pd["width"]
                 height = pd["height"]
 
-                # Add page image
-                img = Image.open(img_path)
-                parts.append(img)
+                # Read page image as bytes
+                with open(img_path, "rb") as f:
+                    img_bytes = f.read()
+                # Determine MIME type from file extension
+                ext = img_path.rsplit(".", 1)[-1].lower() if "." in img_path else "png"
+                mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+                mime_type = mime_map.get(ext, "image/png")
+                images_list.append((img_bytes, mime_type))
 
                 # Gather any existing OCR/digital text as hints
                 ocr_text = self._format_ocr_text(page_idx, ocr_blocks, width)
@@ -409,15 +407,17 @@ class UnifiedVisionProcessor:
             prompt = self._build_complex_prompt(
                 page_infos, translation_ctx=translation_ctx,
             )
-            parts.append(prompt)
 
             # Multimodal call – images + text prompt
-            response = model.generate_content(
-                parts,
-                generation_config={"max_output_tokens": 8192},
+            response_text = generate_with_images(
+                prompt,
+                images_list,
+                model=self.gemini_model,
+                api_key=api_key,
+                max_output_tokens=8192,
             )
 
-            return self._parse_unified_response(response.text, page_data_list)
+            return self._parse_unified_response(response_text, page_data_list)
 
         except Exception as exc:
             logger.error("Complex batch vision processing failed: %s", exc)

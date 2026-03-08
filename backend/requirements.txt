@@ -1,5 +1,5 @@
 # Core PDF processing
-pymupdf>=1.23.0
+pymupdf>=1.25.3
 Pillow>=9.0.0
 
 # OCR

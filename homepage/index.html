@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MoA 문서 변환기 - AI 기반 PDF/문서 변환 솔루션</title>
+  <meta name="description" content="PDF, Word, 한글, Excel, PowerPoint 문서를 HTML/Markdown으로 정확하게 변환하는 AI 기반 솔루션. OCR, 레이아웃 분석, 표 인식, 번역까지.">
+  <meta name="keywords" content="PDF 변환, OCR, 문서 변환, HTML 변환, Markdown, 한글 OCR, AI 문서 분석">
+  <meta property="og:title" content="MoA 문서 변환기">
+  <meta property="og:description" content="AI 기반 PDF/문서 → HTML/Markdown 변환 솔루션">
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ─── Navigation ─── -->
+<nav class="nav" id="nav">
+  <div class="nav-inner container">
+    <a href="#" class="nav-logo">
+      <span class="logo-icon">&#x1F4C4;</span>
+      <span class="logo-text">MoA 문서 변환기</span>
+    </a>
+    <div class="nav-links" id="nav-links">
+      <a href="#features">기능</a>
+      <a href="#how-it-works">작동 원리</a>
+      <a href="#formats">지원 형식</a>
+      <a href="#pricing">요금</a>
+      <a href="#download" class="nav-cta">다운로드</a>
+    </div>
+    <button class="nav-toggle" id="nav-toggle" aria-label="메뉴 열기">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- ─── Hero ─── -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="container hero-content">
+    <div class="hero-badge">AI-Powered Document Converter</div>
+    <h1 class="hero-title">
+      문서를 <span class="gradient-text">완벽하게</span><br>
+      HTML &amp; Markdown으로
+    </h1>
+    <p class="hero-desc">
+      PDF, Word, 한글, Excel, PowerPoint 문서를<br>
+      AI가 레이아웃까지 분석하여 정확하게 변환합니다.
+    </p>
+    <div class="hero-actions">
+      <a href="#download" class="btn btn-primary btn-lg">
+        <span class="btn-icon">&#x2B07;</span> 무료 다운로드
+      </a>
+      <a href="#how-it-works" class="btn btn-ghost btn-lg">작동 원리 보기</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat">
+        <div class="stat-value">5+</div>
+        <div class="stat-label">지원 형식</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <div class="stat-value">99%</div>
+        <div class="stat-label">OCR 정확도</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat">
+        <div class="stat-value">10x</div>
+        <div class="stat-label">병렬 처리</div>
+      </div>
+    </div>
+  </div>
+  <div class="hero-visual">
+    <div class="demo-window">
+      <div class="demo-titlebar">
+        <span class="demo-dot red"></span>
+        <span class="demo-dot yellow"></span>
+        <span class="demo-dot green"></span>
+        <span class="demo-title">MoA 문서 변환기</span>
+      </div>
+      <div class="demo-body">
+        <div class="demo-sidebar">
+          <div class="demo-file-label">입력 문서</div>
+          <div class="demo-file-box">
+            <span>&#x1F4C4;</span> report.pdf
+          </div>
+          <div class="demo-format-label">출력 형식</div>
+          <div class="demo-formats">
+            <span class="demo-format active">HTML</span>
+            <span class="demo-format active">Markdown</span>
+          </div>
+          <div class="demo-convert-btn">변환 시작</div>
+        </div>
+        <div class="demo-preview">
+          <div class="demo-preview-label">변환 결과 미리보기</div>
+          <div class="demo-html-preview">
+            <div class="dh-heading">&#x25CF; 제1조 (목적)</div>
+            <div class="dh-text">이 규정은 문서 관리 및...</div>
+            <div class="dh-table">
+              <div class="dh-row"><span>항목</span><span>내용</span><span>비고</span></div>
+              <div class="dh-row"><span>PDF</span><span>OCR 변환</span><span>AI</span></div>
+              <div class="dh-row"><span>DOCX</span><span>네이티브</span><span>빠름</span></div>
+            </div>
+            <div class="dh-text">제2항에 따라 변환된 문서는...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Features ─── -->
+<section class="section features" id="features">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-badge">Features</div>
+      <h2 class="section-title">왜 MoA 문서 변환기인가?</h2>
+      <p class="section-desc">단순 텍스트 추출이 아닌, AI가 문서의 구조와 맥락을 이해합니다.</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x1F9E0;</span></div>
+        <h3>AI 레이아웃 분석</h3>
+        <p>Surya AI 기반으로 제목, 본문, 표, 그림, 수식, 각주, 다단 구조까지 자동으로 분석합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x1F50D;</span></div>
+        <h3>고정밀 OCR</h3>
+        <p>한국어, 영어, 중국어, 일본어 지원. 스캔 PDF도 원본과 동일한 텍스트로 복원합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x1F4CA;</span></div>
+        <h3>표 구조 인식</h3>
+        <p>셀 병합, 다페이지 연결 표, 투명 테두리 표까지 정확하게 HTML 테이블로 변환합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x1F4D6;</span></div>
+        <h3>읽기 순서 AI</h3>
+        <p>규칙 기반 + VLM(Gemini) 하이브리드로 다단 레이아웃도 자연스러운 순서로 정렬합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x2728;</span></div>
+        <h3>자동 오류 수정</h3>
+        <p>한자, 로마숫자, 법률 용어 등 OCR 오류를 사전 + LLM으로 자동 보정합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x26A1;</span></div>
+        <h3>병렬 처리</h3>
+        <p>PDF를 10페이지 단위로 분할하여 동시 처리. 수백 페이지도 빠르게 변환합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x1F310;</span></div>
+        <h3>번역 기능</h3>
+        <p>7개 언어 간 자동 번역 지원. 문서 변환과 동시에 번역까지 한 번에 완료합니다.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-wrap"><span class="feature-icon">&#x1F4C1;</span></div>
+        <h3>폴더 일괄 변환</h3>
+        <p>폴더 전체 문서를 일괄 처리. 대량 문서 마이그레이션에 최적입니다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── How It Works ─── -->
+<section class="section how-it-works" id="how-it-works">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-badge">How It Works</div>
+      <h2 class="section-title">3단계로 완벽한 변환</h2>
+      <p class="section-desc">복잡한 문서도 AI 파이프라인이 자동으로 처리합니다.</p>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-number">01</div>
+        <div class="step-content">
+          <h3>문서 업로드</h3>
+          <p>PDF, DOCX, HWPX, XLSX, PPTX 파일을 드래그 앤 드롭하거나 폴더를 선택합니다.</p>
+        </div>
+        <div class="step-visual">
+          <div class="step-icon">&#x1F4C2;</div>
+        </div>
+      </div>
+
+      <div class="step-connector">
+        <svg viewBox="0 0 24 60" class="step-arrow"><path d="M12 0 L12 50 M6 44 L12 56 L18 44" stroke="currentColor" fill="none" stroke-width="2"/></svg>
+      </div>
+
+      <div class="step">
+        <div class="step-number">02</div>
+        <div class="step-content">
+          <h3>AI 분석 &amp; 변환</h3>
+          <p>레이아웃 감지 → OCR → 표 인식 → 읽기 순서 → 제목 분류 → 오류 수정 파이프라인이 자동 실행됩니다.</p>
+        </div>
+        <div class="step-visual">
+          <div class="step-icon">&#x1F916;</div>
+        </div>
+      </div>
+
+      <div class="step-connector">
+        <svg viewBox="0 0 24 60" class="step-arrow"><path d="M12 0 L12 50 M6 44 L12 56 L18 44" stroke="currentColor" fill="none" stroke-width="2"/></svg>
+      </div>
+
+      <div class="step">
+        <div class="step-number">03</div>
+        <div class="step-content">
+          <h3>HTML/Markdown 출력</h3>
+          <p>원본 레이아웃이 보존된 깨끗한 HTML과 Markdown 파일을 받아보세요. 이미지와 스타일시트도 함께 포함됩니다.</p>
+        </div>
+        <div class="step-visual">
+          <div class="step-icon">&#x2705;</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Supported Formats ─── -->
+<section class="section formats" id="formats">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-badge">Formats</div>
+      <h2 class="section-title">다양한 문서 형식 지원</h2>
+      <p class="section-desc">주요 문서 형식을 모두 지원합니다.</p>
+    </div>
+
+    <div class="formats-grid">
+      <div class="format-card">
+        <div class="format-ext">PDF</div>
+        <div class="format-name">이미지 PDF (스캔)</div>
+        <div class="format-desc">AI OCR로 텍스트 추출 + 레이아웃 복원</div>
+        <div class="format-tag">AI OCR</div>
+      </div>
+      <div class="format-card">
+        <div class="format-ext">PDF</div>
+        <div class="format-name">디지털 PDF</div>
+        <div class="format-desc">텍스트 레이어 직접 추출, 빠른 변환</div>
+        <div class="format-tag">네이티브</div>
+      </div>
+      <div class="format-card">
+        <div class="format-ext">DOCX</div>
+        <div class="format-name">Microsoft Word</div>
+        <div class="format-desc">스타일, 표, 이미지 완벽 보존</div>
+        <div class="format-tag">네이티브</div>
+      </div>
+      <div class="format-card">
+        <div class="format-ext">HWPX</div>
+        <div class="format-name">한글 (한컴오피스)</div>
+        <div class="format-desc">한국 공공문서 표준 형식 지원</div>
+        <div class="format-tag">네이티브</div>
+      </div>
+      <div class="format-card">
+        <div class="format-ext">XLSX</div>
+        <div class="format-name">Microsoft Excel</div>
+        <div class="format-desc">시트별 테이블 변환</div>
+        <div class="format-tag">네이티브</div>
+      </div>
+      <div class="format-card">
+        <div class="format-ext">PPTX</div>
+        <div class="format-name">Microsoft PowerPoint</div>
+        <div class="format-desc">슬라이드별 콘텐츠 추출</div>
+        <div class="format-tag">네이티브</div>
+      </div>
+    </div>
+
+    <div class="formats-output">
+      <h3>출력 형식</h3>
+      <div class="output-formats">
+        <div class="output-format">
+          <span class="output-icon">&#x1F310;</span>
+          <span class="output-name">HTML</span>
+          <span class="output-desc">스타일 보존, 브라우저 호환</span>
+        </div>
+        <div class="output-format">
+          <span class="output-icon">&#x1F4DD;</span>
+          <span class="output-name">Markdown</span>
+          <span class="output-desc">LLM/RAG 파이프라인 최적</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Comparison ─── -->
+<section class="section comparison">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">기존 도구와의 차이</h2>
+    </div>
+    <div class="comparison-table-wrap">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>기능</th>
+            <th>일반 PDF 변환기</th>
+            <th class="highlight">MoA 문서 변환기</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>스캔 PDF OCR</td>
+            <td>기본 텍스트만</td>
+            <td class="highlight">AI 레이아웃 + 고정밀 OCR</td>
+          </tr>
+          <tr>
+            <td>표 인식</td>
+            <td>단순 테두리만</td>
+            <td class="highlight">셀 병합, 투명 테두리, 다페이지 연결</td>
+          </tr>
+          <tr>
+            <td>다단 레이아웃</td>
+            <td>순서 깨짐</td>
+            <td class="highlight">AI 읽기 순서 분석</td>
+          </tr>
+          <tr>
+            <td>한국어 OCR</td>
+            <td>오류 많음</td>
+            <td class="highlight">한자/법률용어 자동 보정</td>
+          </tr>
+          <tr>
+            <td>지원 형식</td>
+            <td>PDF만</td>
+            <td class="highlight">PDF, DOCX, HWPX, XLSX, PPTX</td>
+          </tr>
+          <tr>
+            <td>처리 속도</td>
+            <td>순차 처리</td>
+            <td class="highlight">10페이지 단위 병렬 처리</td>
+          </tr>
+          <tr>
+            <td>번역</td>
+            <td>미지원</td>
+            <td class="highlight">7개 언어 동시 번역</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Pricing ─── -->
+<section class="section pricing" id="pricing">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-badge">Pricing</div>
+      <h2 class="section-title">합리적인 요금</h2>
+      <p class="section-desc">사용한 만큼만 지불하세요. 디지털 문서와 Office 문서는 거의 무료입니다.</p>
+    </div>
+
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="pricing-header">
+          <h3>이미지 PDF (스캔)</h3>
+          <div class="pricing-price">$0.02 <span>/페이지</span></div>
+        </div>
+        <ul class="pricing-features">
+          <li>AI OCR 텍스트 추출</li>
+          <li>레이아웃 분석</li>
+          <li>표 구조 인식</li>
+          <li>읽기 순서 AI</li>
+          <li>오류 자동 수정</li>
+        </ul>
+      </div>
+
+      <div class="pricing-card featured">
+        <div class="pricing-badge">가장 인기</div>
+        <div class="pricing-header">
+          <h3>디지털 PDF</h3>
+          <div class="pricing-price">$0.005 <span>/페이지</span></div>
+        </div>
+        <ul class="pricing-features">
+          <li>네이티브 텍스트 추출</li>
+          <li>레이아웃 보존</li>
+          <li>표 구조 인식</li>
+          <li>빠른 처리 속도</li>
+          <li>이미지 추출 포함</li>
+        </ul>
+      </div>
+
+      <div class="pricing-card">
+        <div class="pricing-header">
+          <h3>Office 문서</h3>
+          <div class="pricing-price">무료</div>
+        </div>
+        <ul class="pricing-features">
+          <li>DOCX, HWPX 변환</li>
+          <li>XLSX, PPTX 변환</li>
+          <li>스타일 완벽 보존</li>
+          <li>이미지 포함</li>
+          <li>무제한 사용</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="pricing-note">
+      <p>신규 가입 시 <strong>$1.00 크레딧</strong>이 무료 제공됩니다. (이미지 PDF 50페이지 또는 디지털 PDF 200페이지)</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Download ─── -->
+<section class="section download" id="download">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">지금 바로 시작하세요</h2>
+      <p class="section-desc">Windows, macOS, Linux 모두 지원합니다.</p>
+    </div>
+
+    <div class="download-grid">
+      <a href="#" class="download-card" id="dl-windows">
+        <div class="dl-icon">&#x1F5A5;</div>
+        <div class="dl-platform">Windows</div>
+        <div class="dl-detail">Windows 10/11 (64-bit)</div>
+        <div class="dl-filename">MoA-DocumentConverter-Setup.exe</div>
+        <div class="dl-btn">다운로드</div>
+      </a>
+
+      <a href="#" class="download-card" id="dl-macos">
+        <div class="dl-icon">&#x1F34E;</div>
+        <div class="dl-platform">macOS</div>
+        <div class="dl-detail">macOS 12+ (Intel &amp; Apple Silicon)</div>
+        <div class="dl-filename">MoA-DocumentConverter.dmg</div>
+        <div class="dl-btn">다운로드</div>
+      </a>
+
+      <a href="#" class="download-card" id="dl-linux">
+        <div class="dl-icon">&#x1F427;</div>
+        <div class="dl-platform">Linux</div>
+        <div class="dl-detail">Ubuntu 20.04+ / Debian</div>
+        <div class="dl-filename">MoA-DocumentConverter.AppImage</div>
+        <div class="dl-btn">다운로드</div>
+      </a>
+    </div>
+
+    <div class="download-alt">
+      <p>CLI 버전이 필요하신가요?</p>
+      <code>pip install moa-document-converter</code>
+    </div>
+  </div>
+</section>
+
+<!-- ─── Footer ─── -->
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <span class="logo-icon">&#x1F4C4;</span>
+      <span class="logo-text">MoA 문서 변환기</span>
+      <p class="footer-tagline">AI 기반 문서 변환 솔루션</p>
+    </div>
+    <div class="footer-links">
+      <div class="footer-col">
+        <h4>제품</h4>
+        <a href="#features">기능</a>
+        <a href="#pricing">요금</a>
+        <a href="#download">다운로드</a>
+      </div>
+      <div class="footer-col">
+        <h4>지원</h4>
+        <a href="#">문서</a>
+        <a href="#">FAQ</a>
+        <a href="#">문의하기</a>
+      </div>
+      <div class="footer-col">
+        <h4>법적 고지</h4>
+        <a href="#">이용약관</a>
+        <a href="#">개인정보처리방침</a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom container">
+    <p>&copy; 2025 MoA. All rights reserved.</p>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

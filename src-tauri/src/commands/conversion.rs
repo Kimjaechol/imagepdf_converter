@@ -136,8 +136,9 @@ pub async fn convert_document(
     let tgt_lang = target_language.unwrap_or_else(|| "ko".to_string());
 
     match ext.as_str() {
-        // Rust-native converters
-        "docx" | "hwpx" | "xlsx" | "pptx" => {
+        // Non-PDF documents: use Hancom DocsConverter via Python backend,
+        // fallback to Rust-native for DOCX/HWPX/XLSX/PPTX only
+        "hwp" | "hwpx" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => {
             let output_formats = formats.unwrap_or_else(|| vec!["html".to_string(), "markdown".to_string()]);
             let out_dir = output_dir.unwrap_or_else(|| {
                 std::path::Path::new(&input_path)
@@ -147,6 +148,34 @@ pub async fn convert_document(
                     .to_string()
             });
 
+            // Try Hancom DocsConverter via Python backend first
+            let backend_healthy = crate::backend::process::health_check().await;
+            if backend_healthy {
+                let hc_result = convert_document_via_backend(
+                    &input_path, &out_dir, &output_formats,
+                    do_translate, &src_lang, &tgt_lang,
+                ).await;
+
+                if let Ok(result) = hc_result {
+                    return Ok(result);
+                }
+                tracing::warn!(
+                    "Hancom conversion failed, falling back to Rust-native: {}",
+                    hc_result.err().unwrap_or_default()
+                );
+            }
+
+            // Fallback: Rust-native converter (only for formats it supports)
+            let rust_supported = matches!(ext.as_str(), "docx" | "hwpx" | "xlsx" | "pptx");
+            if !rust_supported {
+                return Err(format!(
+                    "Hancom DocsConverter is unavailable and .{} is not supported by the fallback converter. \
+                     Check that the Python backend is running.",
+                    ext
+                ));
+            }
+
+            tracing::info!("Using Rust-native converter for {}", ext);
             let mut result =
                 crate::document::converter::convert_file(&input_path, &out_dir, &output_formats)
                     .await?;
@@ -154,35 +183,29 @@ pub async fn convert_document(
             // If translation is requested, send HTML to Python backend for Gemini translation
             if do_translate {
                 if let Some(ref html) = result.html {
-                    let translated = translate_html_via_backend(
+                    if let Ok(translated) = translate_html_via_backend(
                         html, &src_lang, &tgt_lang,
-                    ).await?;
+                    ).await {
+                        let stem = std::path::Path::new(&input_path)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("output");
+                        let translated_html_path = std::path::Path::new(&out_dir)
+                            .join(format!("{}_translated.html", stem));
+                        let _ = tokio::fs::write(&translated_html_path, &translated).await;
 
-                    // Save translated HTML
-                    let stem = std::path::Path::new(&input_path)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("output");
-                    let translated_html_path = std::path::Path::new(&out_dir)
-                        .join(format!("{}_translated.html", stem));
-                    tokio::fs::write(&translated_html_path, &translated)
-                        .await
-                        .map_err(|e| format!("Cannot write translated HTML: {}", e))?;
+                        let want_md = output_formats.iter().any(|f| f == "markdown" || f == "md");
+                        if want_md {
+                            let md = crate::document::converter::html_to_markdown(&translated);
+                            let md_path = std::path::Path::new(&out_dir)
+                                .join(format!("{}_translated.md", stem));
+                            let _ = tokio::fs::write(&md_path, &md).await;
+                            result.output_files.push(md_path.to_string_lossy().to_string());
+                        }
 
-                    // Also produce translated markdown if requested
-                    let want_md = output_formats.iter().any(|f| f == "markdown" || f == "md");
-                    if want_md {
-                        let md = crate::document::converter::html_to_markdown(&translated);
-                        let md_path = std::path::Path::new(&out_dir)
-                            .join(format!("{}_translated.md", stem));
-                        tokio::fs::write(&md_path, &md)
-                            .await
-                            .map_err(|e| format!("Cannot write translated markdown: {}", e))?;
-                        result.output_files.push(md_path.to_string_lossy().to_string());
+                        result.html = Some(translated);
+                        result.output_files.push(translated_html_path.to_string_lossy().to_string());
                     }
-
-                    result.html = Some(translated);
-                    result.output_files.push(translated_html_path.to_string_lossy().to_string());
                 }
             }
 
@@ -226,6 +249,45 @@ pub async fn convert_document(
         }
         _ => Err(format!("Unsupported file format: .{}", ext)),
     }
+}
+
+/// Call the Python backend's /api/convert/document endpoint (Hancom DocsConverter)
+async fn convert_document_via_backend(
+    input_path: &str,
+    output_dir: &str,
+    output_formats: &[String],
+    translate: bool,
+    source_language: &str,
+    target_language: &str,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+
+    let payload = serde_json::json!({
+        "input_path": input_path,
+        "output_dir": output_dir,
+        "output_formats": output_formats,
+        "translate": translate,
+        "source_language": source_language,
+        "target_language": target_language,
+    });
+
+    let resp = client
+        .post(format!("{}/api/convert/document", backend_url()))
+        .json(&payload)
+        .timeout(std::time::Duration::from_secs(300))
+        .send()
+        .await
+        .map_err(|e| format!("Document conversion backend request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Document conversion failed ({}): {}", status, body));
+    }
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Failed to parse conversion response: {}", e))
 }
 
 /// Call the Python backend's /api/translate-html endpoint

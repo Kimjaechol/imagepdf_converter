@@ -5,7 +5,11 @@ mod commands;
 mod document;
 mod moa;
 
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
+
+/// Holds the auth token so Tauri commands can attach it to backend requests.
+pub struct AuthToken(pub Mutex<String>);
 
 fn show_error_msgbox(title: &str, msg: &str) {
     #[cfg(windows)]
@@ -63,6 +67,7 @@ fn main() {
     tracing::info!("Current dir: {:?}", std::env::current_dir());
 
     tauri::Builder::default()
+        .manage(AuthToken(Mutex::new(String::new())))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
@@ -91,6 +96,8 @@ fn main() {
             commands::file_ops::get_backend_url,
             commands::file_ops::read_file_content,
             commands::file_ops::write_file_content,
+            commands::file_ops::open_path_native,
+            commands::file_ops::open_editor_window,
             // Conversion
             commands::conversion::convert_pdf,
             commands::conversion::convert_batch,
@@ -115,13 +122,22 @@ fn main() {
             // Backend lifecycle
             commands::backend_cmd::restart_backend,
             commands::backend_cmd::backend_health,
+            // Auth
+            commands::credit_cmd::auth_register,
+            commands::credit_cmd::auth_login,
+            commands::credit_cmd::auth_get_me,
+            commands::credit_cmd::set_auth_token,
             // Credits & API key
             commands::credit_cmd::set_api_key,
             commands::credit_cmd::get_api_key_status,
+            commands::credit_cmd::set_upstage_api_key,
+            commands::credit_cmd::get_upstage_api_key_status,
             commands::credit_cmd::get_credits,
             commands::credit_cmd::purchase_credits,
             commands::credit_cmd::estimate_cost,
+            commands::credit_cmd::get_pricing,
             commands::credit_cmd::get_credit_history,
+            commands::credit_cmd::create_checkout,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

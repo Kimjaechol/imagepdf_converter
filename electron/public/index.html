@@ -571,9 +571,12 @@
           <div class="hint">높을수록 정확하지만 느림 (300 추천)</div>
         </div>
         <div class="setting-group">
-          <label>Gemini API 키</label>
-          <input type="text" id="geminiKey" placeholder="입력하세요..." style="font-family:monospace;font-size:12px;">
-          <div class="hint">VLM/LLM 모드 사용 시 필요 (선택사항)</div>
+          <label>서비스 요금표</label>
+          <div class="hint" style="line-height:1.8">
+            이미지 PDF (스캔): $0.02 / 페이지<br>
+            디지털 PDF: $0.005 / 페이지<br>
+            기타 문서 (DOCX, HWPX, XLSX, PPTX): 무료
+          </div>
         </div>
       </div>
     </div>
@@ -650,6 +653,7 @@
       checkBackend();
       setInterval(checkBackend, 5000);
       setupDragDrop();
+      loadApiKeyStatuses();
     }
 
     async function checkBackend() {
@@ -674,6 +678,7 @@
       } else {
         document.querySelectorAll(".tab")[1].classList.add("active");
         document.getElementById("tabSettings").classList.add("active");
+        loadApiKeyStatuses();
       }
     }
 
@@ -819,6 +824,47 @@
       for (const [k, v] of pairs) {
         try { await fetch(`${backendUrl}/api/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: k, value: v }) }); } catch {}
       }
+    }
+
+    async function saveGeminiKey() {
+      const key = document.getElementById("geminiKey").value.trim();
+      if (!key) return;
+      try {
+        await fetch(`${backendUrl}/api/settings/api-key`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: key }) });
+        document.getElementById("geminiKey").value = "";
+        document.getElementById("geminiKeyStatus").textContent = "저장 완료";
+        document.getElementById("geminiKeyStatus").style.color = "#4caf50";
+        loadApiKeyStatuses();
+      } catch (e) { alert("Gemini API 키 저장 실패: " + e.message); }
+    }
+
+    async function saveUpstageKey() {
+      const key = document.getElementById("upstageKey").value.trim();
+      if (!key) return;
+      try {
+        await fetch(`${backendUrl}/api/settings/upstage-api-key`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: key }) });
+        document.getElementById("upstageKey").value = "";
+        document.getElementById("upstageKeyStatus").textContent = "저장 완료";
+        document.getElementById("upstageKeyStatus").style.color = "#4caf50";
+        loadApiKeyStatuses();
+      } catch (e) { alert("Upstage API 키 저장 실패: " + e.message); }
+    }
+
+    async function loadApiKeyStatuses() {
+      try {
+        const r = await fetch(`${backendUrl}/api/settings/api-key/status`);
+        const d = await r.json();
+        const el = document.getElementById("geminiKeyStatus");
+        if (d.configured) { el.textContent = "설정됨: " + d.masked; el.style.color = "#4caf50"; }
+        else { el.textContent = "미설정 (Gemini AI 기능 비활성)"; el.style.color = "#ef5350"; }
+      } catch {}
+      try {
+        const r = await fetch(`${backendUrl}/api/settings/upstage-api-key/status`);
+        const d = await r.json();
+        const el = document.getElementById("upstageKeyStatus");
+        if (d.configured) { el.textContent = "설정됨: " + d.masked; el.style.color = "#4caf50"; }
+        else { el.textContent = "미설정 (스캔 PDF에서 Upstage OCR 비활성)"; el.style.color = "#ef5350"; }
+      } catch {}
     }
 
     function addJob(id, path) {

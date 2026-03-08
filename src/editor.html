@@ -70,15 +70,23 @@
 
   async function loadFile(path) {
     try {
-      const content = await api.readFile(path);
+      const decodedPath = decodeURIComponent(path);
+      const content = await api.readFile(decodedPath);
       if (content) {
         editor.value = content;
-        currentFilePath = path;
+        currentFilePath = decodedPath;
         updatePreview();
-        document.title = `${path.split(/[\\/]/).pop()} - HTML 에디터`;
+        document.title = `${decodedPath.split(/[\\/]/).pop()} - HTML 에디터`;
+      } else {
+        editor.value = `<!-- 파일 내용이 비어 있습니다: ${decodedPath} -->`;
+        updatePreview();
       }
     } catch (e) {
       console.error('Failed to load file:', e);
+      const fileName = path.split(/[\\/]/).pop();
+      editor.value = `<!-- 파일을 열 수 없습니다: ${fileName}\n     오류: ${e}\n     경로: ${path} -->`;
+      editor.style.color = '#c00';
+      updatePreview();
     }
   }
 

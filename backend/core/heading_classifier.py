@@ -252,14 +252,12 @@ Return ONLY the JSON array."""
 
     def _call_gemini(self, prompt: str) -> list[dict] | None:
         try:
-            import google.generativeai as genai
+            from backend.core.gemini_client import generate_content
             api_key = os.environ.get("GEMINI_API_KEY", "")
             if not api_key:
                 return None
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.gemini_model)
-            response = model.generate_content(prompt)
-            return self._parse_json_response(response.text)
+            text = generate_content(prompt, model=self.gemini_model, api_key=api_key)
+            return self._parse_json_response(text)
         except Exception as exc:
             logger.error("Gemini heading classification failed: %s", exc)
             return None

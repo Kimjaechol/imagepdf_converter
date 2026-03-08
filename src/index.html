@@ -15,6 +15,11 @@
     <span class="app-subtitle">PDF · DOCX · HWPX · XLSX · PPTX → HTML / Markdown</span>
   </div>
   <div class="header-right">
+    <div id="user-info" style="display:none;margin-right:12px">
+      <span id="user-display-name" style="font-size:13px;color:#ccc"></span>
+      <span id="user-balance-badge" style="font-size:12px;color:#4caf50;margin-left:8px"></span>
+      <button id="btn-logout" class="btn btn-sm" style="margin-left:8px;font-size:11px">로그아웃</button>
+    </div>
     <span id="status-badge" class="status-badge disconnected">연결 중...</span>
   </div>
 </header>
@@ -184,45 +189,72 @@
         </select>
       </div>
 
-      <div class="section-label" style="margin-top:20px">AI 설정 (운영자)</div>
+      <!-- Auth Section (shown when not logged in) -->
+      <div id="auth-section">
+        <div class="section-label" style="margin-top:20px">로그인 / 회원가입</div>
 
-      <div class="setting-group">
-        <label>Gemini API Key</label>
-        <div style="display:flex;gap:4px">
-          <input type="password" id="set-api-key" placeholder="API 키 입력" class="setting-input" style="flex:1">
-          <button id="btn-save-api-key" class="btn btn-sm">저장</button>
+        <div class="setting-group">
+          <label>이메일</label>
+          <input type="email" id="auth-email" placeholder="email@example.com" class="setting-input">
         </div>
-        <div id="api-key-status" class="setting-hint"></div>
-      </div>
 
-      <div class="section-label" style="margin-top:20px">크레딧 관리</div>
-
-      <div class="setting-group">
-        <label>사용자 ID</label>
-        <input type="text" id="credit-user-id" value="default" class="setting-input">
-      </div>
-
-      <div class="setting-group">
-        <label>잔액</label>
-        <div id="credit-balance" class="setting-hint" style="font-size:16px;font-weight:bold">$0.00</div>
-      </div>
-
-      <div class="setting-group">
-        <label>크레딧 충전 (USD)</label>
-        <div style="display:flex;gap:4px">
-          <input type="number" id="credit-amount" value="5.00" min="0.01" step="0.01" class="setting-input" style="flex:1">
-          <button id="btn-purchase-credit" class="btn btn-sm">충전</button>
+        <div class="setting-group">
+          <label>비밀번호</label>
+          <input type="password" id="auth-password" placeholder="6자 이상" class="setting-input">
         </div>
+
+        <div class="setting-group">
+          <label id="auth-name-label" style="display:none">닉네임 (선택)</label>
+          <input type="text" id="auth-display-name" placeholder="닉네임" class="setting-input" style="display:none">
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="btn-login" class="btn btn-primary" style="flex:1">로그인</button>
+          <button id="btn-register" class="btn btn-outline" style="flex:1">회원가입</button>
+        </div>
+        <div id="auth-status" class="setting-hint" style="margin-top:4px"></div>
       </div>
 
-      <div class="setting-group">
-        <label>비용 추산</label>
-        <div style="display:flex;gap:4px;align-items:center">
-          <input type="number" id="estimate-pages" value="100" min="1" class="setting-input" style="flex:1">
-          <span>페이지</span>
-          <button id="btn-estimate-cost" class="btn btn-sm">추산</button>
+      <!-- Credit Section (shown when logged in) -->
+      <div id="credit-section" style="display:none">
+        <div class="section-label" style="margin-top:20px">크레딧 관리</div>
+
+        <div class="setting-group">
+          <label>잔액</label>
+          <div id="credit-balance" class="setting-hint" style="font-size:16px;font-weight:bold">$0.00</div>
         </div>
-        <div id="cost-estimate-result" class="setting-hint"></div>
+
+        <div class="setting-group">
+          <label>서비스 요금표</label>
+          <div class="setting-hint" style="line-height:1.8">
+            이미지 PDF (스캔): $0.02 / 페이지<br>
+            디지털 PDF: $0.005 / 페이지<br>
+            기타 문서 (DOCX, HWPX, XLSX, PPTX): 무료
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label>크레딧 충전 (USD)</label>
+          <div style="display:flex;gap:4px">
+            <input type="number" id="credit-amount" value="5.00" min="1.00" step="1.00" class="setting-input" style="flex:1">
+            <button id="btn-purchase-credit" class="btn btn-sm">충전</button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label>비용 추산</label>
+          <div style="display:flex;gap:4px;align-items:center">
+            <input type="number" id="estimate-pages" value="100" min="1" class="setting-input" style="flex:1">
+            <span>페이지</span>
+            <select id="estimate-doc-type" class="setting-input" style="flex:1">
+              <option value="image_pdf">이미지 PDF</option>
+              <option value="digital_pdf">디지털 PDF</option>
+              <option value="other">기타 문서</option>
+            </select>
+            <button id="btn-estimate-cost" class="btn btn-sm">추산</button>
+          </div>
+          <div id="cost-estimate-result" class="setting-hint"></div>
+        </div>
       </div>
 
       <!-- Settings status message -->

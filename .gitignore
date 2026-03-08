@@ -29,6 +29,9 @@ build_output/
 output/
 temp/
 *.tmp
+test_output/
+test_files/
+test_integration.py
 
 # OS
 .DS_Store
@@ -37,6 +40,9 @@ Thumbs.db
 # Secrets
 .env
 *.key
+
+# Runtime data (auth DB, credit accounts, API keys)
+data/
 
 # Models cache
 models_cache/

@@ -22,12 +22,12 @@ export async function selectDocumentFile() {
   return await openDialog({
     multiple: false,
     filters: [
-      { name: "지원 문서", extensions: ["pdf", "docx", "hwpx", "xlsx", "pptx"] },
+      { name: "지원 문서", extensions: ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"] },
       { name: "PDF", extensions: ["pdf"] },
-      { name: "Word", extensions: ["docx"] },
-      { name: "한글", extensions: ["hwpx"] },
-      { name: "Excel", extensions: ["xlsx"] },
-      { name: "PowerPoint", extensions: ["pptx"] },
+      { name: "한글", extensions: ["hwp", "hwpx"] },
+      { name: "Word", extensions: ["doc", "docx"] },
+      { name: "Excel", extensions: ["xls", "xlsx"] },
+      { name: "PowerPoint", extensions: ["ppt", "pptx"] },
     ],
   });
 }
@@ -70,11 +70,23 @@ export async function writeFile(path, content) {
 }
 
 export async function openFolder(path) {
-  await shellOpen(path);
+  try {
+    await invoke("open_path_native", { path });
+  } catch (e) {
+    // Fallback to shell:open
+    console.warn("open_path_native failed, trying shell:open:", e);
+    await shellOpen(path);
+  }
 }
 
 export async function openFile(path) {
-  await shellOpen(path);
+  try {
+    await invoke("open_path_native", { path });
+  } catch (e) {
+    // Fallback to shell:open
+    console.warn("open_path_native failed, trying shell:open:", e);
+    await shellOpen(path);
+  }
 }
 
 // ─── PDF Conversion (Python Backend) ──────────────────
@@ -103,7 +115,7 @@ export async function convertBatch(folderPath, outputDir, formats, recursive) {
 }
 
 // ─── Document Conversion (Unified) ────────────────────
-// Routes to Rust-native (docx/hwpx/xlsx/pptx) or Python pipeline (pdf)
+// Routes to Hancom DocsConverter (non-PDF) or Upstage+Gemini pipeline (PDF)
 export async function convertDocument(inputPath, outputDir, formats, translate, sourceLang, targetLang) {
   return await invoke("convert_document", {
     inputPath: inputPath,
@@ -174,7 +186,51 @@ export async function moaToolManifest() {
   return await invoke("moa_tool_manifest");
 }
 
-// ─── API Key & Credits ───────────────────────────────
+// ─── Auth ─────────────────────────────────────────────
+export async function register(email, password, displayName) {
+  return await invoke("auth_register", { email, password, displayName: displayName || "" });
+}
+
+export async function login(email, password) {
+  return await invoke("auth_login", { email, password });
+}
+
+export async function getMe() {
+  return await invoke("auth_get_me");
+}
+
+export function getAuthToken() {
+  return localStorage.getItem("auth_token") || "";
+}
+
+export async function setAuthToken(token) {
+  localStorage.setItem("auth_token", token);
+  // Also sync to Tauri state so Rust commands can use it
+  try {
+    await invoke("set_auth_token", { token });
+  } catch {
+    // Backend may not support this yet
+  }
+}
+
+export function clearAuth() {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("user_info");
+}
+
+export function getUserInfo() {
+  try {
+    return JSON.parse(localStorage.getItem("user_info") || "null");
+  } catch {
+    return null;
+  }
+}
+
+export function setUserInfo(info) {
+  localStorage.setItem("user_info", JSON.stringify(info));
+}
+
+// ─── API Key (operator only, kept for local dev) ─────
 export async function setApiKey(apiKey) {
   return await invoke("set_api_key", { apiKey: apiKey });
 }
@@ -183,20 +239,37 @@ export async function getApiKeyStatus() {
   return await invoke("get_api_key_status");
 }
 
-export async function getCredits(userId) {
-  return await invoke("get_credits", { userId: userId });
+export async function setUpstageApiKey(apiKey) {
+  return await invoke("set_upstage_api_key", { apiKey: apiKey });
 }
 
-export async function purchaseCredits(userId, amountUsd) {
-  return await invoke("purchase_credits", { userId: userId, amountUsd: amountUsd });
+export async function getUpstageApiKeyStatus() {
+  return await invoke("get_upstage_api_key_status");
 }
 
-export async function estimateCost(numPages) {
-  return await invoke("estimate_cost", { numPages: numPages });
+// ─── Credits ──────────────────────────────────────────
+export async function getCredits() {
+  return await invoke("get_credits", {});
 }
 
-export async function getCreditHistory(userId) {
-  return await invoke("get_credit_history", { userId: userId });
+export async function purchaseCredits(amountUsd) {
+  return await invoke("purchase_credits", { amountUsd });
+}
+
+export async function estimateCost(numPages, docType) {
+  return await invoke("estimate_cost", { numPages, docType: docType || "image_pdf" });
+}
+
+export async function getPricing() {
+  return await invoke("get_pricing");
+}
+
+export async function getCreditHistory() {
+  return await invoke("get_credit_history");
+}
+
+export async function createCheckout(amountUsd) {
+  return await invoke("create_checkout", { amountUsd });
 }
 
 // ─── WebSocket Progress ──────────────────────────────
@@ -236,6 +309,11 @@ export async function connectProgress(jobId, onMessage) {
   }
 }
 
+// ─── Editor Window ────────────────────────────────────
+export async function openEditorWindow(filePath) {
+  return await invoke("open_editor_window", { filePath: filePath || null });
+}
+
 // ─── Utility ─────────────────────────────────────────
 export function getFileExtension(path) {
   return (path || "").split(".").pop().toLowerCase();
@@ -245,10 +323,14 @@ export function isRustNativeFormat(ext) {
   return ["docx", "hwpx", "xlsx", "pptx"].includes(ext);
 }
 
+export function isHancomFormat(ext) {
+  return ["hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ext);
+}
+
 export function isPdfFormat(ext) {
   return ext === "pdf";
 }
 
 export function isSupportedFormat(ext) {
-  return ["pdf", "docx", "hwpx", "xlsx", "pptx"].includes(ext);
+  return ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ext);
 }

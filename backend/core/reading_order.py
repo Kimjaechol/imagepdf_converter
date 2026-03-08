@@ -641,7 +641,7 @@ class ReadingOrderRefiner:
         Returns the verified number of columns (may reduce to 1).
         """
         try:
-            import google.generativeai as genai
+            from backend.core.gemini_client import generate_content
 
             api_key = os.environ.get("GEMINI_API_KEY", "")
             if not api_key:
@@ -674,9 +674,6 @@ class ReadingOrderRefiner:
             if len(left_texts) < 2 or len(right_texts) < 2:
                 return num_cols  # Not enough text to verify
 
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.gemini_model)
-
             prompt = f"""You are a document layout expert. I detected a potential {num_cols}-column layout.
 Below are text samples from each column, reading top-to-bottom within each column.
 
@@ -697,8 +694,7 @@ Rules:
 - false = text flows LEFT-to-RIGHT across columns on same line (it's actually a single wide column or a table)
 - false = left and right are clearly the same sentence split in half"""
 
-            response = model.generate_content(prompt)
-            result_text = response.text.strip()
+            result_text = generate_content(prompt, model=self.gemini_model, api_key=api_key).strip()
             if "```json" in result_text:
                 result_text = result_text.split("```json")[1].split("```")[0].strip()
             elif "```" in result_text:
@@ -865,15 +861,12 @@ Rules:
         image_path: str | None,
     ) -> list[LayoutBlock]:
         try:
-            import google.generativeai as genai
+            from backend.core.gemini_client import generate_content as gc, generate_with_image
 
             api_key = os.environ.get("GEMINI_API_KEY", "")
             if not api_key:
                 logger.warning("GEMINI_API_KEY not set, skipping VLM refinement.")
                 return blocks
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(self.gemini_model)
 
             block_descs = []
             for b in blocks:
@@ -889,14 +882,19 @@ Rules:
 
             prompt = self._build_reading_order_prompt(block_descs, page_width, page_height)
 
-            parts = [prompt]
             if image_path:
-                from PIL import Image
-                img = Image.open(image_path)
-                parts.insert(0, img)
+                import mimetypes
+                mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+                with open(image_path, "rb") as f:
+                    image_data = f.read()
+                response_text = generate_with_image(
+                    prompt, image_data, mime_type=mime_type,
+                    model=self.gemini_model, api_key=api_key,
+                )
+            else:
+                response_text = gc(prompt, model=self.gemini_model, api_key=api_key)
 
-            response = model.generate_content(parts)
-            order_result = self._parse_vlm_response(response.text, blocks)
+            order_result = self._parse_vlm_response(response_text, blocks)
             if order_result:
                 return order_result
 

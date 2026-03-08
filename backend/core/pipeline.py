@@ -46,7 +46,10 @@ class PipelineConfig:
     max_workers: int = 10
     dpi: int = 300
     output_formats: list[str] = field(default_factory=lambda: ["html", "markdown"])
-    # Pipeline mode: "standard" (multi-step) | "unified_vision" (single Gemini call)
+    # Pipeline mode:
+    #   "standard"       – multi-step local pipeline (layout→OCR→table→heading→correction)
+    #   "unified_vision" – single Gemini call with TAG=0/1 optimization
+    #   "upstage_hybrid" – Upstage Document Parse + Gemini visual comparison
     pipeline_mode: str = "unified_vision"
     # Sub-configs
     layout_engine: str = "surya"
@@ -71,6 +74,13 @@ class PipelineConfig:
     html_inline_css: bool = True
     md_table_format: str = "pipe"
     md_footnote_style: str = "reference"
+    # ── Upstage Hybrid mode configs ──
+    upstage_mode: str = "auto"           # "auto" | "standard" | "enhanced"
+    upstage_max_workers: int = 4
+    upstage_force_enhanced_scanned: bool = True
+    # Gemini visual comparison configs
+    gemini_visual_batch_size: int = 3    # pages per visual comparison batch
+    gemini_max_structure_change: float = 0.3  # max 30% DOM change allowed
 
     @classmethod
     def from_yaml(cls, path: str) -> "PipelineConfig":
@@ -86,6 +96,7 @@ class PipelineConfig:
         corr = data.get("correction", {})
         out = data.get("output", {})
         models = data.get("models", {})
+        upstage = data.get("upstage", {})
 
         return cls(
             pages_per_chunk=pipe.get("pages_per_chunk", 10),
@@ -115,6 +126,12 @@ class PipelineConfig:
             html_inline_css=out.get("html", {}).get("inline_css", True),
             md_table_format=out.get("markdown", {}).get("table_format", "pipe"),
             md_footnote_style=out.get("markdown", {}).get("footnote_style", "reference"),
+            # Upstage hybrid configs
+            upstage_mode=upstage.get("mode", "auto"),
+            upstage_max_workers=upstage.get("max_workers", 4),
+            upstage_force_enhanced_scanned=upstage.get("force_enhanced_scanned", True),
+            gemini_visual_batch_size=upstage.get("visual_batch_size", 3),
+            gemini_max_structure_change=upstage.get("max_structure_change", 0.3),
         )
 
 
@@ -176,6 +193,43 @@ class Pipeline:
             table_format=self.cfg.md_table_format,
             footnote_style=self.cfg.md_footnote_style,
         )
+        # ── Upstage Hybrid components (lazy-initialized) ──
+        self._upstage_parser = None
+        self._digital_extractor = None
+        self._gemini_refiner = None
+
+    @property
+    def upstage_parser(self):
+        if self._upstage_parser is None:
+            from .upstage_parser import UpstageDocumentParser, UpstageParseConfig
+            self._upstage_parser = UpstageDocumentParser(
+                config=UpstageParseConfig(
+                    mode=self.cfg.upstage_mode,
+                    force_enhanced_for_scanned=self.cfg.upstage_force_enhanced_scanned,
+                    max_workers=self.cfg.upstage_max_workers,
+                ),
+            )
+        return self._upstage_parser
+
+    @property
+    def digital_extractor(self):
+        if self._digital_extractor is None:
+            from .digital_pdf_extractor import DigitalPdfExtractor
+            self._digital_extractor = DigitalPdfExtractor(dpi=self.cfg.dpi)
+        return self._digital_extractor
+
+    @property
+    def gemini_refiner(self):
+        if self._gemini_refiner is None:
+            from .upstage_gemini_refiner import RefinementConfig, UpstageGeminiRefiner
+            self._gemini_refiner = UpstageGeminiRefiner(
+                config=RefinementConfig(
+                    gemini_model=self.cfg.gemini_model,
+                    visual_batch_size=self.cfg.gemini_visual_batch_size,
+                    max_structure_change_ratio=self.cfg.gemini_max_structure_change,
+                ),
+            )
+        return self._gemini_refiner
 
     # ------------------------------------------------------------------
     # Adaptive worker scaling & upload pipelining
@@ -227,17 +281,15 @@ class Pipeline:
     def _measure_upload_bandwidth(
         self, sample_image_path: str, api_key: str,
     ) -> tuple[float | None, float]:
-        """Measure pure upload speed via Gemini File API (free, no tokens).
+        """Measure upload speed by sending a small Gemini generate request.
 
-        Uploads a sample image to Gemini's file storage, measures the
-        elapsed time, then immediately deletes the file.  This gives
-        the exact upload bandwidth to the same Google servers that will
-        handle the real batches — with zero inference overhead and zero
-        API cost.
+        Sends a sample image via the gemini_client REST API with a
+        trivial prompt, measures the round-trip time, and estimates
+        pure upload bandwidth by subtracting estimated inference time.
 
         Returns (upload_speed_MB_s | None, image_size_MB).
         """
-        import google.generativeai as genai
+        from backend.core import gemini_client
 
         avg_img_mb = 3.0
 
@@ -248,25 +300,33 @@ class Pipeline:
             img_size_bytes = os.path.getsize(sample_image_path)
             avg_img_mb = img_size_bytes / (1024 * 1024)
 
-            genai.configure(api_key=api_key)
+            with open(sample_image_path, "rb") as f:
+                image_data = f.read()
 
-            # Pure upload — no model inference, no token cost
+            # Send a minimal request to measure upload bandwidth.
+            # The inference overhead is small (~0.5-1s) compared to
+            # upload time for multi-MB images.
             start = time.time()
-            uploaded_file = genai.upload_file(sample_image_path)
+            gemini_client.generate_with_image(
+                text_prompt="Reply with OK.",
+                image_data=image_data,
+                mime_type="image/png",
+                model=self.cfg.gemini_model,
+                api_key=api_key,
+                max_output_tokens=8,
+                timeout=60,
+            )
             elapsed = time.time() - start
 
-            # Clean up immediately
-            try:
-                genai.delete_file(uploaded_file.name)
-            except Exception:
-                pass  # non-critical; files auto-expire after 48h
-
-            speed = avg_img_mb / max(elapsed, 0.01)
+            # Subtract estimated inference overhead to isolate upload time
+            est_inference_sec = 1.0
+            upload_elapsed = max(elapsed - est_inference_sec, 0.1)
+            speed = avg_img_mb / upload_elapsed
 
             logger.info(
-                "Bandwidth probe (File API): %.2fMB uploaded in %.2fs "
-                "→ %.1f MB/s",
-                avg_img_mb, elapsed, speed,
+                "Bandwidth probe (REST): %.2fMB uploaded in %.2fs "
+                "(round-trip %.2fs - ~%.1fs inference) → %.1f MB/s",
+                avg_img_mb, upload_elapsed, elapsed, est_inference_sec, speed,
             )
             return speed, avg_img_mb
 
@@ -337,7 +397,15 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def process(self, job: PdfJob) -> DocumentResult:
-        """Process a single PDF file end-to-end."""
+        """Process a single PDF file end-to-end.
+
+        Pipeline modes:
+          "upstage_hybrid" – Upstage Document Parse + Gemini visual comparison
+            - Image PDFs: Upstage OCR → Gemini visual comparison
+            - Digital PDFs: PyMuPDF extraction → Gemini visual comparison
+          "unified_vision" – Single Gemini call with TAG=0/1 optimization
+          "standard"       – Multi-step local pipeline
+        """
         start = time.time()
 
         # Translation mode logging
@@ -354,7 +422,12 @@ class Pipeline:
         images_dir = work_dir / "images"
         output_images_dir = job.output_dir / "images"
 
-        if self.cfg.pipeline_mode == "unified_vision":
+        if self.cfg.pipeline_mode == "upstage_hybrid":
+            # ── Upstage + Gemini hybrid mode ──
+            all_pages, total_pages = self._process_upstage_hybrid(
+                job, images_dir, output_images_dir,
+            )
+        elif self.cfg.pipeline_mode == "unified_vision":
             # ── Adaptive processing: prescan first, then smart batching ──
             all_pages, total_pages, page_data_by_idx = (
                 self._process_unified_adaptive(
@@ -457,6 +530,205 @@ class Pipeline:
         return results
 
     # ------------------------------------------------------------------
+    # Upstage + Gemini hybrid processing
+    # ------------------------------------------------------------------
+
+    def _process_upstage_hybrid(
+        self,
+        job: PdfJob,
+        images_dir: Path,
+        output_images_dir: Path,
+    ) -> tuple[list[PageResult], int]:
+        """Upstage Document Parse + Gemini visual comparison hybrid workflow.
+
+        This implements a 2-stage hybrid approach:
+
+        **Image/Scanned PDFs:**
+          Stage 1: Upstage Document Parse → structured HTML with layout,
+                   tables, images separated
+          Stage 2: Send HTML + separated images + original page images
+                   to Gemini for visual comparison and correction
+
+        **Digital PDFs:**
+          Stage 1: PyMuPDF local extraction → text, tables, layout with
+                   exact font info (more accurate than OCR for digital text)
+          Stage 2: Send extracted structure + original page images
+                   to Gemini for visual comparison and correction
+
+        The pipeline auto-detects PDF type (digital vs scanned) and routes
+        to the appropriate Stage 1 extractor.
+
+        Returns (all_pages, total_page_count).
+        """
+        total_pages = self.splitter.get_page_count(job.input_path)
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── Step 1: Detect PDF type ──
+        self.progress_callback("Detecting PDF type", 0.02)
+        is_digital = self.digital_extractor.is_digital_pdf(job.input_path)
+
+        if is_digital:
+            logger.info("Digital PDF detected – using local PyMuPDF extraction")
+            self.progress_callback("Extracting text from digital PDF", 0.05)
+        else:
+            logger.info("Scanned/image PDF detected – using Upstage Document Parse")
+            self.progress_callback("Sending to Upstage Document Parse", 0.05)
+
+        # ── Step 2: Stage 1 extraction ──
+        page_images: dict[int, str] = {}
+
+        if is_digital:
+            # Digital PDF: use local PyMuPDF for text/structure extraction
+            # Render images for Gemini visual comparison
+            all_pages, page_images = self.digital_extractor.extract(
+                job.input_path,
+                render_images=True,
+                images_dir=images_dir,
+            )
+            self.progress_callback(
+                f"Extracted {len(all_pages)} pages with PyMuPDF", 0.30,
+            )
+        else:
+            # Scanned/image PDF: use Upstage Document Parse
+            upstage_api_key = os.environ.get("UPSTAGE_API_KEY", "")
+
+            if upstage_api_key:
+                all_pages = self.upstage_parser.parse_pdf(
+                    job.input_path,
+                    progress_callback=self.progress_callback,
+                )
+            else:
+                logger.warning(
+                    "UPSTAGE_API_KEY not set! Falling back to unified_vision mode."
+                )
+                # Fall back to existing unified_vision pipeline
+                all_pages_uv, total, page_data_by_idx = (
+                    self._process_unified_adaptive(
+                        job, images_dir, output_images_dir,
+                    )
+                )
+                # Apply corrections and integrity checks inline
+                all_blocks = [b for p in all_pages_uv for b in p.blocks]
+                all_blocks = self.correction.correct_dictionary_only(all_blocks)
+                all_pages_uv = assign_content_ids_and_seq(all_pages_uv)
+                image_extractor = ImageExtractor(output_dir=output_images_dir)
+                for page in all_pages_uv:
+                    pd = page_data_by_idx.get(page.page_index)
+                    if pd:
+                        page.blocks = image_extractor.extract_images(
+                            pd["image_path"], page.blocks, page.page_index,
+                        )
+                return all_pages_uv, total
+
+            if not all_pages:
+                logger.warning(
+                    "Upstage Document Parse returned no results. "
+                    "Falling back to unified_vision mode."
+                )
+                all_pages_uv, total, page_data_by_idx = (
+                    self._process_unified_adaptive(
+                        job, images_dir, output_images_dir,
+                    )
+                )
+                all_blocks = [b for p in all_pages_uv for b in p.blocks]
+                all_blocks = self.correction.correct_dictionary_only(all_blocks)
+                all_pages_uv = assign_content_ids_and_seq(all_pages_uv)
+                image_extractor = ImageExtractor(output_dir=output_images_dir)
+                for page in all_pages_uv:
+                    pd = page_data_by_idx.get(page.page_index)
+                    if pd:
+                        page.blocks = image_extractor.extract_images(
+                            pd["image_path"], page.blocks, page.page_index,
+                        )
+                return all_pages_uv, total
+
+            # Render page images for Gemini visual comparison
+            self.progress_callback("Rendering page images for comparison", 0.45)
+            page_images = self._render_all_page_images(
+                job.input_path, images_dir,
+            )
+
+            self.progress_callback(
+                f"Upstage parsed {len(all_pages)} pages", 0.50,
+            )
+
+        # ── Step 3: Stage 2 – Gemini visual comparison ──
+        self.progress_callback("Starting Gemini visual comparison", 0.50)
+
+        # Configure translation if requested
+        if job.translate:
+            self.gemini_refiner.config.translate = True
+            self.gemini_refiner.config.source_language = job.source_language
+            self.gemini_refiner.config.target_language = job.target_language
+
+        refinement_result = self.gemini_refiner.refine_with_visual_comparison(
+            pages=all_pages,
+            page_images=page_images,
+            progress_callback=self.progress_callback,
+        )
+
+        all_pages = refinement_result.pages
+        logger.info(
+            "Gemini visual comparison: %d corrections, %d rejected",
+            refinement_result.corrections_applied,
+            refinement_result.pages_rejected,
+        )
+
+        # ── Step 4: Dictionary-based correction as safety net ──
+        self.progress_callback("Applying dictionary corrections", 0.80)
+        all_blocks = [b for p in all_pages for b in p.blocks]
+        all_blocks = self.correction.correct_dictionary_only(all_blocks)
+
+        # ── Step 5: Block integrity ──
+        self.progress_callback("Verifying block integrity", 0.85)
+        all_pages = assign_content_ids_and_seq(all_pages)
+
+        # ── Step 6: Extract images ──
+        self.progress_callback("Extracting images", 0.88)
+        image_extractor = ImageExtractor(output_dir=output_images_dir)
+        for page in all_pages:
+            img_path = page_images.get(page.page_index)
+            if img_path:
+                page.blocks = image_extractor.extract_images(
+                    img_path, page.blocks, page.page_index,
+                )
+
+        # Store TOC in metadata (available for future features)
+        if refinement_result.toc:
+            logger.info(
+                "Generated TOC with %d entries", len(refinement_result.toc),
+            )
+
+        return all_pages, total_pages
+
+    def _render_all_page_images(
+        self,
+        pdf_path: Path,
+        images_dir: Path,
+    ) -> dict[int, str]:
+        """Render all PDF pages to images for Gemini visual comparison."""
+        import fitz
+
+        page_images: dict[int, str] = {}
+        doc = fitz.open(str(pdf_path))
+        zoom = self.cfg.dpi / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        for page_idx in range(len(doc)):
+            try:
+                pix = doc[page_idx].get_pixmap(matrix=mat)
+                img_path = images_dir / f"page_{page_idx:04d}.png"
+                pix.save(str(img_path))
+                page_images[page_idx] = str(img_path)
+            except Exception as exc:
+                logger.warning("Failed to render page %d: %s", page_idx, exc)
+
+        doc.close()
+        return page_images
+
+    # ------------------------------------------------------------------
     # Adaptive unified processing (prescan-first, no fixed chunking)
     # ------------------------------------------------------------------
 
@@ -510,7 +782,9 @@ class Pipeline:
             len(tag0_pages), len(tag1_pages), len(all_page_data),
         )
 
-        # 3. Gather digital text + run local OCR on TAG=0 pages without it
+        # 3. Gather digital text + run local OCR on pages without it
+        #    ALL pages (both TAG=0 and TAG=1) need OCR fallback so that
+        #    if Gemini fails, we still have text to display.
         self.progress_callback("Running local OCR on text-only pages", 0.15)
         ocr_blocks: dict[int, list[LayoutBlock]] = {}
         for pd in all_page_data:
@@ -518,14 +792,16 @@ class Pipeline:
             if digital_blocks:
                 ocr_blocks[pd["page_index"]] = digital_blocks
 
-        for pd in tag0_pages:
+        # Run local OCR on ALL pages that lack digital text (both TAG=0 and TAG=1)
+        # This ensures scanned TAG=1 pages have fallback text if Gemini fails.
+        for pd in all_page_data:
             page_idx = pd["page_index"]
             if page_idx not in ocr_blocks:
                 local_blocks = self.ocr.ocr_full_page(pd["image_path"], page_idx)
                 if local_blocks:
                     ocr_blocks[page_idx] = local_blocks
                     logger.debug(
-                        "Local OCR for TAG=0 page %d: %d blocks",
+                        "Local OCR for page %d: %d blocks",
                         page_idx, len(local_blocks),
                     )
 
@@ -572,6 +848,34 @@ class Pipeline:
         # 6. Measure resources & process batches with upload pipelining
         self.progress_callback("Measuring network & memory", 0.19)
         api_key = os.environ.get("GEMINI_API_KEY", "")
+
+        if not api_key:
+            logger.warning(
+                "GEMINI_API_KEY not set! All %d pages will use local OCR fallback only. "
+                "Set the API key in Settings for AI-powered layout analysis.",
+                len(all_page_data),
+            )
+            self.progress_callback(
+                "Warning: API key not set - using local OCR only", 0.20,
+            )
+            # Skip Gemini entirely; return fallback from OCR blocks directly
+            all_results: list[PageResult] = []
+            for pd in all_page_data:
+                page_idx = pd["page_index"]
+                fallback_blocks: list[LayoutBlock] = []
+                if page_idx in ocr_blocks:
+                    fallback_blocks = list(ocr_blocks[page_idx])
+                    for fb_i, fb_b in enumerate(fallback_blocks):
+                        if fb_b.reading_order < 0:
+                            fb_b.reading_order = fb_i
+                all_results.append(PageResult(
+                    page_index=page_idx,
+                    width=pd["width"],
+                    height=pd["height"],
+                    blocks=fallback_blocks,
+                ))
+            page_data_by_idx = {pd["page_index"]: pd for pd in all_page_data}
+            return all_results, total_pages, page_data_by_idx
 
         all_results: list[PageResult] = []
         completed = 0
@@ -700,6 +1004,11 @@ class Pipeline:
                 fallback_blocks: list[LayoutBlock] = []
                 if miss_idx in ocr_blocks:
                     fallback_blocks = list(ocr_blocks[miss_idx])
+                    # Assign sequential reading_order to fallback blocks
+                    # (they may have reading_order=-1 from extraction)
+                    for fb_idx, fb_block in enumerate(fallback_blocks):
+                        if fb_block.reading_order < 0:
+                            fb_block.reading_order = fb_idx
                     logger.info(
                         "Fallback for page %d: using %d OCR blocks",
                         miss_idx, len(fallback_blocks),
