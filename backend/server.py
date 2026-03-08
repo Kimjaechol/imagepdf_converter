@@ -154,6 +154,16 @@ class EstimateCostRequest(BaseModel):
     doc_type: str = "image_pdf"  # "image_pdf" | "digital_pdf" | "other"
 
 
+class DocumentConvertRequest(BaseModel):
+    input_path: str
+    output_dir: str
+    output_formats: list[str] = ["html", "markdown"]
+    refine_with_gemini: bool = True  # Enable Gemini post-processing
+    translate: bool = False
+    source_language: str = ""
+    target_language: str = "ko"
+
+
 class JobStatus(BaseModel):
     job_id: str
     status: str  # pending | processing | completed | error
@@ -626,6 +636,177 @@ HTML to translate:
 
     translated_body = "\n".join(translated_chunks)
     return head_part + translated_body + tail_part
+
+
+# ---------------------------------------------------------------------------
+# Document Conversion (LibreOffice headless)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/libreoffice/status")
+async def libreoffice_status():
+    """Check if LibreOffice is available for document conversion."""
+    try:
+        from backend.core.libreoffice_converter import is_libreoffice_available, get_soffice_path
+        available = is_libreoffice_available()
+        path = get_soffice_path() if available else None
+        return {"available": available, "path": path}
+    except Exception:
+        return {"available": False, "path": None}
+
+
+@app.post("/api/convert/document")
+async def convert_document(req: DocumentConvertRequest):
+    """Convert a document (DOCX/HWPX/XLSX/PPTX) to HTML using LibreOffice.
+
+    Optionally applies Gemini post-processing for quality assurance.
+    """
+    input_path = Path(req.input_path)
+    if not input_path.exists():
+        raise HTTPException(404, f"File not found: {req.input_path}")
+
+    ext = input_path.suffix.lower().lstrip(".")
+    if ext not in ("docx", "hwpx", "xlsx", "pptx"):
+        raise HTTPException(400, f"Unsupported format for LibreOffice conversion: .{ext}")
+
+    output_dir = Path(req.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            _convert_document_sync,
+            str(input_path),
+            str(output_dir),
+            req.output_formats,
+            req.refine_with_gemini,
+            req.translate,
+            req.source_language,
+            req.target_language,
+        )
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    except TimeoutError as e:
+        raise HTTPException(504, str(e))
+    except Exception as e:
+        logger.error("Document conversion failed: %s", e)
+        raise HTTPException(500, f"Conversion failed: {e}")
+
+
+def _convert_document_sync(
+    input_path: str,
+    output_dir: str,
+    output_formats: list[str],
+    refine_with_gemini: bool,
+    translate: bool,
+    source_language: str,
+    target_language: str,
+) -> dict:
+    """Synchronous document conversion pipeline."""
+    from backend.core.libreoffice_converter import convert_to_html, clean_libreoffice_html
+
+    stem = Path(input_path).stem
+    ext = Path(input_path).suffix.lower().lstrip(".")
+
+    # Step 1: LibreOffice conversion
+    lo_result = convert_to_html(input_path, output_dir)
+    html = lo_result["html"]
+    images = lo_result["images"]
+    elapsed = lo_result["elapsed_seconds"]
+
+    # Step 2: Basic cleanup
+    html = clean_libreoffice_html(html)
+
+    # Step 3: Gemini refinement (optional)
+    gemini_refined = False
+    if refine_with_gemini and os.environ.get("GEMINI_API_KEY"):
+        try:
+            from backend.core.gemini_html_refiner import refine_html
+            html = refine_html(html, original_path=input_path, doc_type=ext)
+            gemini_refined = True
+        except Exception as e:
+            logger.warning("Gemini refinement failed, using LibreOffice output: %s", e)
+
+    # Step 4: Translation (optional)
+    translated = False
+    if translate and os.environ.get("GEMINI_API_KEY"):
+        try:
+            api_key = os.environ["GEMINI_API_KEY"]
+            html = _translate_html_sync(html, source_language, target_language, api_key)
+            translated = True
+        except Exception as e:
+            logger.warning("Translation failed: %s", e)
+
+    # Step 5: Save final HTML
+    output_files = []
+    want_html = "html" in output_formats
+    want_md = "markdown" in output_formats or "md" in output_formats
+
+    if want_html:
+        html_path = Path(output_dir) / f"{stem}.html"
+        html_path.write_text(html, encoding="utf-8")
+        output_files.append(str(html_path))
+
+    # Step 6: Generate Markdown
+    markdown = None
+    if want_md:
+        from backend.core.md_renderer import html_to_markdown
+        try:
+            markdown = html_to_markdown(html)
+        except Exception:
+            # Fallback: basic conversion
+            markdown = _basic_html_to_markdown(html)
+        md_path = Path(output_dir) / f"{stem}.md"
+        md_path.write_text(markdown, encoding="utf-8")
+        output_files.append(str(md_path))
+
+    # Collect image paths
+    image_paths = []
+    img_dir = Path(output_dir) / "images"
+    if img_dir.exists():
+        image_paths = [str(p) for p in img_dir.iterdir() if p.is_file()]
+
+    return {
+        "html": html if want_html else None,
+        "markdown": markdown,
+        "output_files": output_files,
+        "images": image_paths,
+        "page_count": None,
+        "title": stem,
+        "author": None,
+        "engine": "libreoffice",
+        "gemini_refined": gemini_refined,
+        "translated": translated,
+        "elapsed_seconds": elapsed,
+    }
+
+
+def _basic_html_to_markdown(html: str) -> str:
+    """Minimal HTML to Markdown fallback if md_renderer is unavailable."""
+    import re
+    text = html
+    # Remove head/style
+    text = re.sub(r'<head>.*?</head>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    # Headings
+    for i in range(1, 7):
+        text = re.sub(rf'<h{i}[^>]*>(.*?)</h{i}>', rf'\n{"#" * i} \1\n', text, flags=re.DOTALL)
+    # Bold/italic
+    text = re.sub(r'<(?:strong|b)>(.*?)</(?:strong|b)>', r'**\1**', text)
+    text = re.sub(r'<(?:em|i)>(.*?)</(?:em|i)>', r'*\1*', text)
+    # Paragraphs
+    text = re.sub(r'<p[^>]*>(.*?)</p>', r'\n\1\n', text, flags=re.DOTALL)
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    # Strip remaining tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Clean entities
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    text = text.replace('&nbsp;', ' ').replace('&quot;', '"')
+    # Clean whitespace
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 # ---------------------------------------------------------------------------

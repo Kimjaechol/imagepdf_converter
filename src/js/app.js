@@ -227,7 +227,7 @@ function handleFileSelected(path) {
   const fileInfo = $("#file-info");
   if (fileInfo) {
     const icon = getFileIcon(ext);
-    const engine = api.isRustNativeFormat(ext) ? "Rust 네이티브" : "Python AI 파이프라인";
+    const engine = api.isPdfFormat(ext) ? "AI 파이프라인" : "LibreOffice + AI 보정";
     fileInfo.innerHTML = `
       <div class="file-card">
         <span class="file-icon">${icon}</span>
@@ -366,10 +366,12 @@ async function convertSingle() {
         pollJobProgress(jobId);
       }
     } else {
-      // Rust-native result (instant)
+      // Direct result (LibreOffice or Rust-native)
+      const engine = result.engine === "libreoffice" ? "LibreOffice" : "네이티브";
+      const refined = result.gemini_refined ? " + AI 보정" : "";
       updateProgress(100, "변환 완료!");
       showResults(result);
-      showStatus("변환 완료!", "success");
+      showStatus(`변환 완료! (${engine}${refined})`, "success");
     }
   } catch (e) {
     showStatus(`변환 실패: ${e}`, "error");
