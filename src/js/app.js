@@ -483,7 +483,7 @@ function showStatus(message, type) {
   }
 }
 
-function showResults(result) {
+async function showResults(result) {
   // Hide welcome, show results
   const welcome = $("#welcome-section");
   if (welcome) welcome.style.display = "none";
@@ -556,8 +556,12 @@ async function handleOpenEditor() {
 
 function getFileIcon(ext) {
   const icons = {
-    pdf: "\u{1F4C4}", docx: "\u{1F4DD}", hwpx: "\u{1F4D1}",
-    xlsx: "\u{1F4CA}", pptx: "\u{1F4CA}", html: "\u{1F310}", md: "\u{1F4D6}",
+    pdf: "\u{1F4C4}",
+    doc: "\u{1F4DD}", docx: "\u{1F4DD}",
+    hwp: "\u{1F4D1}", hwpx: "\u{1F4D1}",
+    xls: "\u{1F4CA}", xlsx: "\u{1F4CA}",
+    ppt: "\u{1F4CA}", pptx: "\u{1F4CA}",
+    html: "\u{1F310}", md: "\u{1F4D6}",
   };
   return icons[ext] || "\u{1F4C1}";
 }

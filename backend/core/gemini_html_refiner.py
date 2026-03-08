@@ -33,21 +33,20 @@ def is_gemini_available() -> bool:
 def refine_html(
     html: str,
     original_path: str | None = None,
-    doc_type: str = "document",
+    doc_type: str = "pdf",
 ) -> str:
-    """Refine LibreOffice-generated HTML using Gemini.
+    """Refine Upstage-extracted HTML using Gemini (PDF 2nd pass).
 
     Focuses on:
-    - Table structure correction (merged cells, headers)
-    - Heading level normalization
-    - List structure cleanup
-    - Removing LibreOffice artifacts (empty elements, redundant styles)
-    - Consistent Korean typography
+    - Heading font sizes and bold/italic accuracy
+    - Table structure and cell content correctness
+    - Image placement verification
+    - Text and number position correction (OCR errors, displaced digits)
 
     Args:
-        html: The LibreOffice-generated HTML
-        original_path: Path to original document (for context in prompt)
-        doc_type: "docx", "hwpx", "xlsx", "pptx" etc.
+        html: The Upstage Document Parse output HTML
+        original_path: Path to original PDF (for context in prompt)
+        doc_type: typically "pdf" (image_pdf or digital_pdf)
 
     Returns:
         Refined HTML string

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -373,8 +374,6 @@ def is_hancom_available() -> bool:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-import re
 
 def _rewrite_image_paths(html: str, img_dir: str) -> str:
     """Rewrite image src paths to point to img_dir/."""

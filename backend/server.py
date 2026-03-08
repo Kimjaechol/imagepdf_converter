@@ -1000,7 +1000,7 @@ async def get_pricing():
         "pricing": [
             {"doc_type": "image_pdf", "label": "Image PDF (scanned)", "per_page_usd": PRICE_IMAGE_PDF_PER_PAGE},
             {"doc_type": "digital_pdf", "label": "Digital PDF", "per_page_usd": PRICE_DIGITAL_PDF_PER_PAGE},
-            {"doc_type": "other", "label": "DOCX / HWPX / XLSX / PPTX", "per_page_usd": PRICE_OTHER_PER_PAGE},
+            {"doc_type": "other", "label": "HWP / HWPX / DOC / DOCX / XLS / XLSX / PPT / PPTX", "per_page_usd": PRICE_OTHER_PER_PAGE},
         ]
     }
 

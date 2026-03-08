@@ -266,7 +266,6 @@ async fn convert_document_via_backend(
         "input_path": input_path,
         "output_dir": output_dir,
         "output_formats": output_formats,
-        "refine_with_gemini": true,
         "translate": translate,
         "source_language": source_language,
         "target_language": target_language,
