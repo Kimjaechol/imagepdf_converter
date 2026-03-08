@@ -735,7 +735,16 @@ def _batch_convert_sync(
             })
             continue
 
-        html = clean_hancom_html(hc["html"])
+        raw_html = hc.get("html") or ""
+        if not raw_html.strip():
+            final_results.append({
+                "input_path": path,
+                "error": "Empty HTML returned from converter",
+                "output_files": [],
+            })
+            continue
+
+        html = clean_hancom_html(raw_html)
 
         output_files = []
         if want_html:
@@ -830,8 +839,12 @@ def _convert_document_sync(
     # Step 1: Hancom DocsConverter conversion
     hc_result = convert_to_html(input_path, output_dir)
     html = hc_result["html"]
-    images = hc_result["images"]
     elapsed = hc_result["elapsed_seconds"]
+
+    if not html or not html.strip():
+        raise RuntimeError(
+            f"Hancom DocsConverter returned empty HTML for: {Path(input_path).name}"
+        )
 
     # Step 2: Basic cleanup
     html = clean_hancom_html(html)

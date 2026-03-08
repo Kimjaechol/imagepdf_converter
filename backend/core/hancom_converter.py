@@ -392,17 +392,20 @@ def clean_hancom_html(html: str) -> str:
 
     Removes server-specific artifacts while preserving document structure.
     """
+    if not html:
+        return html
+
     # Remove XML declaration
     html = re.sub(r'<\?xml[^?]*\?>\s*', '', html)
 
     # Remove Hancom-specific meta tags
     html = re.sub(r'<meta\s+name="generator"[^>]*>', '', html)
 
-    # Remove empty paragraphs / spans
+    # Remove empty paragraphs / spans (only truly empty ones)
     html = re.sub(r'<p[^>]*>\s*</p>', '', html)
     html = re.sub(r'<span[^>]*>\s*</span>', '', html)
 
-    # Clean excessive whitespace before >
-    html = re.sub(r'\s+>', '>', html)
+    # Collapse multiple blank lines into one
+    html = re.sub(r'\n{3,}', '\n\n', html)
 
     return html
