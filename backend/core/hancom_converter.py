@@ -15,6 +15,7 @@ API pattern: /{module_code}/{convert_api}?file_path={relative_path}&show_type=0
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -25,6 +26,95 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Authenticated HTTP client (session with cookies)
+# ---------------------------------------------------------------------------
+
+_http_client: httpx.Client | None = None
+_authenticated: bool = False
+
+
+def _load_hancom_credentials() -> tuple[str, str]:
+    """Load Hancom server credentials from data/hancom_auth.json."""
+    cred_path = Path(__file__).resolve().parent.parent.parent / "data" / "hancom_auth.json"
+    if not cred_path.exists():
+        # Fallback to environment variables
+        username = os.environ.get("HANCOM_USERNAME", "")
+        password = os.environ.get("HANCOM_PASSWORD", "")
+        if username and password:
+            return username, password
+        raise RuntimeError(
+            f"Hancom credentials not found at {cred_path} and "
+            "HANCOM_USERNAME/HANCOM_PASSWORD env vars not set."
+        )
+    data = json.loads(cred_path.read_text(encoding="utf-8"))
+    return data["username"], data["password"]
+
+
+def _get_client() -> httpx.Client:
+    """Get or create an authenticated httpx Client with session cookies."""
+    global _http_client, _authenticated
+
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.Client(timeout=CONVERT_TIMEOUT)
+        _authenticated = False
+
+    if not _authenticated:
+        _login()
+
+    return _http_client
+
+
+def _login() -> None:
+    """Authenticate with the Hancom DocsConverter server."""
+    global _http_client, _authenticated
+
+    username, password = _load_hancom_credentials()
+    base_url = _hancom_base_url()
+
+    # Try common login endpoints
+    login_endpoints = [
+        "/login",
+        "/api/login",
+        "/auth/login",
+        "/api/auth/login",
+    ]
+
+    login_payloads = [
+        # JSON body
+        {"json": {"username": username, "password": password}},
+        # Form data
+        {"data": {"username": username, "password": password}},
+    ]
+
+    client = _http_client
+    last_error = None
+
+    for endpoint in login_endpoints:
+        url = f"{base_url}{endpoint}"
+        for payload in login_payloads:
+            try:
+                response = client.post(url, timeout=30, **payload)
+                if response.status_code in (200, 201, 204, 302):
+                    _authenticated = True
+                    logger.info(
+                        "Hancom login OK via %s (HTTP %d)",
+                        endpoint, response.status_code,
+                    )
+                    return
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+            except Exception as exc:
+                last_error = str(exc)
+
+    # If no login endpoint worked, try Basic Auth approach instead –
+    # recreate client with auth and mark as authenticated
+    _http_client = httpx.Client(
+        timeout=CONVERT_TIMEOUT,
+        auth=httpx.BasicAuth(username, password),
+    )
+    _authenticated = True
+    logger.info("Hancom: using Basic Auth (no login endpoint found, last: %s)", last_error)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -126,9 +216,11 @@ def upload_file(file_path: str) -> str:
     logger.info("Uploading %s to Hancom server: %s", local_path.name, upload_url)
     start = time.time()
 
+    client = _get_client()
+
     try:
         with open(local_path, "rb") as f:
-            response = httpx.post(
+            response = client.post(
                 upload_url,
                 files={"file": (local_path.name, f)},
                 timeout=UPLOAD_TIMEOUT,
@@ -217,8 +309,10 @@ def convert_to_html(
 
     logger.info("Hancom converting: %s (module=%s)", local_path.name, module)
 
+    client = _get_client()
+
     try:
-        response = httpx.get(convert_url, timeout=CONVERT_TIMEOUT)
+        response = client.get(convert_url, timeout=CONVERT_TIMEOUT)
     except httpx.TimeoutException:
         raise TimeoutError(
             f"Hancom conversion timed out after {CONVERT_TIMEOUT}s: {local_path.name}"
@@ -251,14 +345,14 @@ def convert_to_html(
         # Download HTML file from server
         if html_path_remote:
             html_url = f"{base_url}/download?path={html_path_remote}"
-            html_resp = httpx.get(html_url, timeout=60)
+            html_resp = client.get(html_url, timeout=60)
             if html_resp.status_code == 200:
                 html_content = html_resp.text
 
         # Download images
         for img_path in image_paths_remote:
             img_url = f"{base_url}/download?path={img_path}"
-            img_resp = httpx.get(img_url, timeout=60)
+            img_resp = client.get(img_url, timeout=60)
             if img_resp.status_code == 200:
                 img_name = Path(img_path).name
                 images.append((img_name, img_resp.content))
@@ -357,15 +451,17 @@ def convert_batch(
 # ---------------------------------------------------------------------------
 
 def is_hancom_available() -> bool:
-    """Check if the Hancom DocsConverter server is reachable."""
+    """Check if the Hancom DocsConverter server is reachable and authenticated."""
     try:
+        client = _get_client()
         base_url = _hancom_base_url()
-        response = httpx.get(f"{base_url}/health", timeout=5)
+        response = client.get(f"{base_url}/health", timeout=5)
         return response.status_code == 200
     except Exception:
         # Try a simple connection check
         try:
-            response = httpx.get(_hancom_base_url(), timeout=5)
+            client = _get_client()
+            response = client.get(_hancom_base_url(), timeout=5)
             return response.status_code < 500
         except Exception:
             return False
