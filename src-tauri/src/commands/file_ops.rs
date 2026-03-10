@@ -41,13 +41,15 @@ pub async fn open_editor_window(
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     let url = if let Some(ref fp) = file_path {
+        // Properly percent-encode the file path (encode each UTF-8 byte individually)
         let encoded: String = fp
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || "-_.~/\\:".contains(c) {
-                    c.to_string()
+            .as_bytes()
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_alphanumeric() || b"-_.~/\\:".contains(&b) {
+                    String::from(b as char)
                 } else {
-                    format!("%{:02X}", c as u32)
+                    format!("%{:02X}", b)
                 }
             })
             .collect();
@@ -56,10 +58,9 @@ pub async fn open_editor_window(
         WebviewUrl::App("editor.html".into())
     };
 
-    // If the editor window already exists, focus it
+    // If the editor window already exists, close it first so it reopens with the new file
     if let Some(win) = app.get_webview_window("editor") {
-        let _ = win.set_focus();
-        return Ok(true);
+        let _ = win.destroy();
     }
 
     WebviewWindowBuilder::new(&app, "editor", url)

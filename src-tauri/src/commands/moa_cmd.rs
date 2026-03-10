@@ -131,7 +131,7 @@ pub async fn moa_convert(request: MoaConvertRequest) -> Result<MoaConvertRespons
             let body = serde_json::json!({
                 "input_path": request.source,
                 "output_dir": out_dir,
-                "formats": formats,
+                "output_formats": formats,
             });
 
             match client
@@ -141,12 +141,14 @@ pub async fn moa_convert(request: MoaConvertRequest) -> Result<MoaConvertRespons
                 .await
             {
                 Ok(resp) => {
+                    let is_success = resp.status().is_success();
                     let data: serde_json::Value = resp
                         .json()
                         .await
                         .unwrap_or(serde_json::json!({"error": "parse failed"}));
+                    let has_error = data.get("error").and_then(|v| v.as_str()).is_some();
                     Ok(MoaConvertResponse {
-                        success: true,
+                        success: is_success && !has_error,
                         task_id: request.task_id.or(data.get("job_id").and_then(|v| v.as_str()).map(String::from)),
                         source_format,
                         target_format: request.target_format,

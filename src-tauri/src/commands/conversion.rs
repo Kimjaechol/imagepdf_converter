@@ -46,8 +46,14 @@ fn backend_url() -> String {
     format!("http://127.0.0.1:{}", port)
 }
 
+fn auth_header(app: &tauri::AppHandle) -> String {
+    let state = app.state::<crate::AuthToken>();
+    let token = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    format!("Bearer {}", token)
+}
+
 #[tauri::command]
-pub async fn convert_pdf(request: ConvertRequest) -> Result<serde_json::Value, String> {
+pub async fn convert_pdf(app: tauri::AppHandle, request: ConvertRequest) -> Result<serde_json::Value, String> {
     // Build the JSON payload with field names matching the Python backend
     let input_path = &request.input_path;
     let output_dir = request.output_dir.clone().unwrap_or_else(|| {
@@ -72,10 +78,17 @@ pub async fn convert_pdf(request: ConvertRequest) -> Result<serde_json::Value, S
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/api/convert", backend_url()))
+        .header("Authorization", auth_header(&app))
         .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Backend request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Conversion failed ({}): {}", status, body));
+    }
 
     resp.json::<serde_json::Value>()
         .await
@@ -105,6 +118,12 @@ pub async fn convert_batch(request: BatchRequest) -> Result<serde_json::Value, S
         .await
         .map_err(|e| format!("Backend request failed: {}", e))?;
 
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Batch conversion failed ({}): {}", status, body));
+    }
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))
@@ -113,6 +132,7 @@ pub async fn convert_batch(request: BatchRequest) -> Result<serde_json::Value, S
 /// Unified document conversion - routes to Rust-native or Python backend
 #[tauri::command]
 pub async fn convert_document(
+    app: tauri::AppHandle,
     input_path: String,
     output_dir: Option<String>,
     formats: Option<Vec<String>>,
@@ -218,7 +238,7 @@ pub async fn convert_document(
             let backend_healthy = crate::backend::process::health_check().await;
 
             if backend_healthy {
-                convert_pdf(ConvertRequest {
+                convert_pdf(app, ConvertRequest {
                     input_path,
                     output_dir,
                     output_formats: formats,
@@ -342,6 +362,12 @@ pub async fn get_job_status(job_id: String) -> Result<JobStatus, String> {
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Get job status failed ({}): {}", status, body));
+    }
+
     resp.json::<JobStatus>()
         .await
         .map_err(|e| format!("Failed to parse: {}", e))
@@ -352,6 +378,12 @@ pub async fn list_jobs() -> Result<serde_json::Value, String> {
     let resp = reqwest::get(format!("{}/api/jobs", backend_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("List jobs failed ({}): {}", status, body));
+    }
 
     resp.json::<serde_json::Value>()
         .await

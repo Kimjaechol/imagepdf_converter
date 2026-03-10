@@ -47,9 +47,12 @@ fn convert_sync(path: &str) -> Result<(String, Vec<(String, Vec<u8>)>, DocMeta),
 
             body_html.push_str("<table>\n");
 
-            // First row as header
+            // First row as header with proper thead/tbody structure
             let mut first_row = true;
             for row in range.rows() {
+                if first_row {
+                    body_html.push_str("<thead>\n");
+                }
                 body_html.push_str("<tr>");
                 let tag = if first_row { "th" } else { "td" };
                 for cell in row {
@@ -60,9 +63,15 @@ fn convert_sync(path: &str) -> Result<(String, Vec<(String, Vec<u8>)>, DocMeta),
                     ));
                 }
                 body_html.push_str("</tr>\n");
-                first_row = false;
+                if first_row {
+                    body_html.push_str("</thead>\n<tbody>\n");
+                    first_row = false;
+                }
             }
 
+            if !first_row {
+                body_html.push_str("</tbody>\n");
+            }
             body_html.push_str("</table>\n");
         } else {
             body_html.push_str("<p><em>(시트 읽기 실패)</em></p>\n");

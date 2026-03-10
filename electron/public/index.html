@@ -571,6 +571,22 @@
           <div class="hint">높을수록 정확하지만 느림 (300 추천)</div>
         </div>
         <div class="setting-group">
+          <label>Gemini API 키</label>
+          <div style="display:flex;gap:8px;">
+            <input type="password" id="geminiKey" placeholder="Gemini API 키를 입력하세요" style="flex:1;">
+            <button class="browse-btn" onclick="saveGeminiKey()">저장</button>
+          </div>
+          <div class="hint" id="geminiKeyStatus">상태 확인 중...</div>
+        </div>
+        <div class="setting-group">
+          <label>Upstage API 키</label>
+          <div style="display:flex;gap:8px;">
+            <input type="password" id="upstageKey" placeholder="Upstage API 키를 입력하세요" style="flex:1;">
+            <button class="browse-btn" onclick="saveUpstageKey()">저장</button>
+          </div>
+          <div class="hint" id="upstageKeyStatus">상태 확인 중...</div>
+        </div>
+        <div class="setting-group">
           <label>서비스 요금표</label>
           <div class="hint" style="line-height:1.8">
             이미지 PDF (스캔): $0.02 / 페이지<br>
@@ -903,16 +919,19 @@
       list.innerHTML = entries.map(([id, j]) => {
         const pct = Math.round(j.progress * 100);
         const name = j.path ? j.path.split(/[\\/]/).pop() : "알 수 없음";
+        const dirAttr = (j.result.output_dir || outputDirectory || "").replace(/&/g,"&amp;").replace(/"/g,"&quot;");
         const actions = j.status === "completed" && j.result
-          ? `<div class="jc-actions"><button onclick="openOutput('${(j.result.output_dir || outputDirectory).replace(/\\/g, "\\\\")}')">📂 결과 폴더 열기</button><button onclick="openInEditor('${(j.result.output_dir || outputDirectory).replace(/\\/g, "\\\\")}')">&#9998; HTML 에디터로 열기</button></div>` : "";
+          ? `<div class="jc-actions"><button class="jc-open-folder" data-dir="${dirAttr}">📂 결과 폴더 열기</button><button class="jc-open-editor" data-dir="${dirAttr}">&#9998; HTML 에디터로 열기</button></div>` : "";
         return `<div class="job-card"><div class="jc-top"><div class="jc-name">${name}</div><div class="jc-badge ${j.status}">${labels[j.status]||j.status}</div></div><div class="jc-progress"><div class="jc-progress-fill ${j.status}" style="width:${pct}%"></div></div><div class="jc-detail"><div class="jc-msg">${j.detailMsg||j.message}</div><div class="jc-pct">${pct}%</div></div>${actions}</div>`;
       }).join("");
-    }
 
-    async function openOutput(dir) { await window.electronAPI.openFolder(dir); }
-    async function openInEditor(dir) {
-      // Find the first .html file in the output directory
-      await window.electronAPI.openEditor(dir);
+      // Bind click handlers via event delegation (avoids inline injection)
+      list.querySelectorAll(".jc-open-folder").forEach(btn => {
+        btn.addEventListener("click", () => window.electronAPI.openFolder(btn.dataset.dir));
+      });
+      list.querySelectorAll(".jc-open-editor").forEach(btn => {
+        btn.addEventListener("click", () => window.electronAPI.openEditor(btn.dataset.dir));
+      });
     }
     function showHelp() { document.getElementById("helpModal").classList.add("show"); }
     function hideHelp() { document.getElementById("helpModal").classList.remove("show"); }

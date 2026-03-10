@@ -496,16 +496,18 @@ async function showResults(result) {
   if (!fileList) return;
 
   const files = result?.output_files || result?.outputFiles || [];
-  fileList.innerHTML = files
-    .map((f) => {
-      const name = f.split(/[\\/]/).pop();
-      const ext = name.split(".").pop();
-      return `<div class="result-file" data-path="${f}">
-        <span class="file-icon">${getFileIcon(ext)}</span>
-        <span class="file-name">${name}</span>
-      </div>`;
-    })
-    .join("");
+  fileList.innerHTML = "";
+  files.forEach((f) => {
+    const name = f.split(/[\\/]/).pop();
+    const ext = name.split(".").pop();
+    const div = document.createElement("div");
+    div.className = "result-file";
+    div.dataset.path = f;
+    div.innerHTML = `<span class="file-icon">${getFileIcon(ext)}</span>
+        <span class="file-name"></span>`;
+    div.querySelector(".file-name").textContent = name;
+    fileList.appendChild(div);
+  });
 
   fileList.querySelectorAll(".result-file").forEach((item) => {
     item.addEventListener("click", async () => {

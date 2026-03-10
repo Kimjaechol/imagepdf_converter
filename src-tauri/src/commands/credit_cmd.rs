@@ -7,8 +7,18 @@ fn backend_url() -> String {
 /// Read the auth token stored by the frontend (passed from localStorage via Tauri state).
 fn auth_header(app: &tauri::AppHandle) -> String {
     let state = app.state::<crate::AuthToken>();
-    let token = state.0.lock().unwrap();
+    let token = state.0.lock().unwrap_or_else(|e| e.into_inner());
     format!("Bearer {}", token)
+}
+
+/// Check HTTP response status and return a descriptive error if not successful.
+async fn check_response(resp: reqwest::Response, context: &str) -> Result<reqwest::Response, String> {
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{} failed ({}): {}", context, status, body));
+    }
+    Ok(resp)
 }
 
 // ─── Auth ──────────────────────────────────────────────
@@ -31,11 +41,7 @@ pub async fn auth_register(
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Registration failed ({}): {}", status, body));
-    }
+    let resp = check_response(resp, "Registration").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -55,11 +61,7 @@ pub async fn auth_login(email: String, password: String) -> Result<serde_json::V
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Login failed ({}): {}", status, body));
-    }
+    let resp = check_response(resp, "Login").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -76,6 +78,8 @@ pub async fn auth_get_me(app: tauri::AppHandle) -> Result<serde_json::Value, Str
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    let resp = check_response(resp, "Get user info").await?;
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -84,7 +88,7 @@ pub async fn auth_get_me(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 #[tauri::command]
 pub async fn set_auth_token(app: tauri::AppHandle, token: String) -> Result<(), String> {
     let state = app.state::<crate::AuthToken>();
-    let mut t = state.0.lock().unwrap();
+    let mut t = state.0.lock().unwrap_or_else(|e| e.into_inner());
     *t = token;
     Ok(())
 }
@@ -101,6 +105,8 @@ pub async fn set_api_key(api_key: String) -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    let resp = check_response(resp, "Set API key").await?;
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -111,6 +117,8 @@ pub async fn get_api_key_status() -> Result<serde_json::Value, String> {
     let resp = reqwest::get(format!("{}/api/settings/api-key/status", backend_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get API key status").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -127,6 +135,8 @@ pub async fn set_upstage_api_key(api_key: String) -> Result<serde_json::Value, S
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    let resp = check_response(resp, "Set Upstage API key").await?;
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -137,6 +147,8 @@ pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
     let resp = reqwest::get(format!("{}/api/settings/upstage-api-key/status", backend_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get Upstage API key status").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -154,6 +166,8 @@ pub async fn get_credits(app: tauri::AppHandle) -> Result<serde_json::Value, Str
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get credits").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -176,6 +190,8 @@ pub async fn purchase_credits(
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    let resp = check_response(resp, "Purchase credits").await?;
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -197,6 +213,8 @@ pub async fn estimate_cost(
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    let resp = check_response(resp, "Estimate cost").await?;
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -207,6 +225,8 @@ pub async fn get_pricing() -> Result<serde_json::Value, String> {
     let resp = reqwest::get(format!("{}/api/credits/pricing", backend_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get pricing").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -222,6 +242,8 @@ pub async fn get_credit_history(app: tauri::AppHandle) -> Result<serde_json::Val
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get credit history").await?;
 
     resp.json::<serde_json::Value>()
         .await
@@ -243,6 +265,8 @@ pub async fn create_checkout(
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Create checkout").await?;
 
     resp.json::<serde_json::Value>()
         .await

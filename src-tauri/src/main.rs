@@ -141,15 +141,18 @@ fn main() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                let handle = window.app_handle().clone();
-                // Use thread to ensure cleanup completes before exit
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    rt.block_on(backend::process::stop_backend(&handle));
-                });
+                // Only stop the backend when the main window is closed, not the editor window
+                if window.label() == "main" {
+                    let handle = window.app_handle().clone();
+                    // Use thread to ensure cleanup completes before exit
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        rt.block_on(backend::process::stop_backend(&handle));
+                    });
+                }
             }
         })
         .run(tauri::generate_context!())

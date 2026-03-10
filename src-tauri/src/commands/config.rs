@@ -24,6 +24,12 @@ pub async fn get_config() -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Get config failed ({}): {}", status, body));
+    }
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -39,6 +45,12 @@ pub async fn update_config(update: ConfigUpdate) -> Result<serde_json::Value, St
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Update config failed ({}): {}", status, body));
+    }
+
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Parse failed: {}", e))
@@ -53,6 +65,12 @@ pub async fn add_dictionary_term(term: DictTerm) -> Result<serde_json::Value, St
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Add dictionary term failed ({}): {}", status, body));
+    }
 
     resp.json::<serde_json::Value>()
         .await
