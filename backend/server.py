@@ -10,14 +10,16 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backend.core.pipeline import Pipeline, PipelineConfig
 from backend.models.schema import PdfJob
 from backend.services.credit_service import CreditService
 from backend.services.auth_service import AuthService
+from backend.services.payment_service import PaymentService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ _jobs: dict[str, dict[str, Any]] = {}  # job_id -> status
 _websockets: dict[str, WebSocket] = {}
 _credit_service: CreditService | None = None
 _auth_service: AuthService | None = None
+_payment_service: PaymentService | None = None
 
 
 def _get_credit_service() -> CreditService:
@@ -55,6 +58,13 @@ def _get_auth_service() -> AuthService:
     if _auth_service is None:
         _auth_service = AuthService(data_dir="data")
     return _auth_service
+
+
+def _get_payment_service() -> PaymentService:
+    global _payment_service
+    if _payment_service is None:
+        _payment_service = PaymentService(data_dir="data")
+    return _payment_service
 
 
 async def get_current_user(authorization: str = Header(default="")) -> dict:
@@ -148,6 +158,27 @@ class PurchaseCreditsRequest(BaseModel):
 
 class CreateCheckoutRequest(BaseModel):
     amount_usd: float
+    success_url: str = ""
+    cancel_url: str = ""
+
+
+class CreateTossPaymentRequest(BaseModel):
+    amount_krw: int  # 원화 금액
+    method: str = ""  # 카드, 간편결제, 계좌이체, etc. (비어있으면 전체 표시)
+    order_name: str = "MoA 문서 변환기 크레딧"
+    success_url: str = ""
+    fail_url: str = ""
+
+
+class ConfirmTossPaymentRequest(BaseModel):
+    payment_key: str
+    order_id: str
+    amount: int
+
+
+class CancelTossPaymentRequest(BaseModel):
+    payment_key: str
+    cancel_reason: str = "고객 요청에 의한 취소"
 
 
 class EstimateCostRequest(BaseModel):
@@ -1025,63 +1056,246 @@ async def get_credit_history(user: dict = Depends(get_current_user), limit: int 
 
 
 # ---------------------------------------------------------------------------
-# Stripe Checkout (payment integration)
+# Payment Gateway Status
 # ---------------------------------------------------------------------------
 
-@app.post("/api/payments/create-checkout")
-async def create_checkout(req: CreateCheckoutRequest, user: dict = Depends(get_current_user)):
-    """Create a Stripe Checkout session for credit purchase."""
-    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
-    if not stripe_key:
-        raise HTTPException(500, "Payment system not configured")
+@app.get("/api/payments/gateways")
+async def get_payment_gateways():
+    """Return available payment gateways and their status."""
+    stripe_configured = bool(os.environ.get("STRIPE_SECRET_KEY", ""))
+    toss_configured = bool(
+        os.environ.get("TOSS_CLIENT_KEY", "") and
+        os.environ.get("TOSS_SECRET_KEY", "")
+    )
+    exchange_rate = float(os.environ.get("KRW_USD_RATE", "1350"))
+
+    return {
+        "gateways": [
+            {
+                "id": "stripe",
+                "name": "Stripe (International)",
+                "description": "신용카드 / 체크카드 (해외 결제)",
+                "currency": "USD",
+                "configured": stripe_configured,
+                "methods": ["card"],
+            },
+            {
+                "id": "toss",
+                "name": "토스페이먼츠 (국내 결제)",
+                "description": "카카오페이, 네이버페이, 카드, 계좌이체",
+                "currency": "KRW",
+                "configured": toss_configured,
+                "methods": [
+                    {"id": "카드", "name": "신용/체크카드"},
+                    {"id": "간편결제", "name": "간편결제 (카카오페이, 네이버페이, 토스페이)"},
+                    {"id": "계좌이체", "name": "계좌이체"},
+                    {"id": "가상계좌", "name": "가상계좌"},
+                    {"id": "휴대폰", "name": "휴대폰 결제"},
+                ],
+                "client_key": os.environ.get("TOSS_CLIENT_KEY", "") if toss_configured else "",
+            },
+        ],
+        "exchange_rate": exchange_rate,
+        "credit_packages_usd": [
+            {"amount_usd": 5.0, "label": "$5"},
+            {"amount_usd": 10.0, "label": "$10"},
+            {"amount_usd": 20.0, "label": "$20", "popular": True},
+            {"amount_usd": 50.0, "label": "$50"},
+            {"amount_usd": 100.0, "label": "$100"},
+        ],
+        "credit_packages_krw": [
+            {"amount_krw": 5000, "label": "₩5,000"},
+            {"amount_krw": 10000, "label": "₩10,000"},
+            {"amount_krw": 20000, "label": "₩20,000", "popular": True},
+            {"amount_krw": 50000, "label": "₩50,000"},
+            {"amount_krw": 100000, "label": "₩100,000"},
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stripe Checkout (international card payments)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/payments/stripe/checkout")
+async def create_stripe_checkout(req: CreateCheckoutRequest, user: dict = Depends(get_current_user)):
+    """Create a Stripe Checkout session for credit purchase (USD)."""
+    if req.amount_usd <= 0:
+        raise HTTPException(400, "금액은 0보다 커야 합니다")
 
     try:
-        import stripe
-        stripe.api_key = stripe_key
-
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {"name": "MoA Converter Credits"},
-                    "unit_amount": int(req.amount_usd * 100),
-                },
-                "quantity": 1,
-            }],
-            mode="payment",
-            success_url=os.environ.get("STRIPE_SUCCESS_URL", "http://localhost:3000/payment-success"),
-            cancel_url=os.environ.get("STRIPE_CANCEL_URL", "http://localhost:3000/payment-cancel"),
-            metadata={
-                "user_id": user["user_id"],
-                "amount_usd": str(req.amount_usd),
-            },
+        svc = _get_payment_service()
+        result = svc.create_stripe_checkout(
+            user_id=user["user_id"],
+            amount_usd=req.amount_usd,
+            success_url=req.success_url or None,
+            cancel_url=req.cancel_url or None,
         )
-        return {"checkout_url": session.url, "session_id": session.id}
+        return result
     except ImportError:
-        raise HTTPException(500, "stripe package not installed")
+        raise HTTPException(500, "stripe 패키지가 설치되지 않았습니다")
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Payment error: {e}")
+        logger.error("Stripe checkout error: %s", e)
+        raise HTTPException(500, f"결제 오류: {e}")
+
+
+@app.post("/api/payments/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Handle Stripe webhook events with signature verification."""
+    try:
+        payload = await request.body()
+        sig_header = request.headers.get("stripe-signature", "")
+
+        svc = _get_payment_service()
+        event = svc.verify_stripe_webhook(payload, sig_header)
+
+        if event is None:
+            raise HTTPException(400, "Webhook signature verification failed")
+
+        credit_info = svc.handle_stripe_event(event)
+        if credit_info:
+            # Credit the user's balance
+            credit_svc = _get_credit_service()
+            credit_svc.purchase_credits(
+                credit_info["user_id"],
+                credit_info["amount_usd"],
+            )
+            logger.info(
+                "Stripe payment confirmed: user=%s amount=$%.2f",
+                credit_info["user_id"], credit_info["amount_usd"],
+            )
+
+        return {"received": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Stripe webhook error: %s", e)
+        raise HTTPException(500, str(e))
+
+
+# Backward compatibility: old endpoint redirects to new
+@app.post("/api/payments/create-checkout")
+async def create_checkout_legacy(req: CreateCheckoutRequest, user: dict = Depends(get_current_user)):
+    """Legacy endpoint – redirects to /api/payments/stripe/checkout."""
+    return await create_stripe_checkout(req, user)
 
 
 @app.post("/api/payments/webhook")
-async def stripe_webhook(request_body: dict):
-    """Handle Stripe webhook events (payment confirmation)."""
-    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
-    if not stripe_key:
-        raise HTTPException(500, "Payment system not configured")
+async def stripe_webhook_legacy(request: Request):
+    """Legacy endpoint – redirects to /api/payments/stripe/webhook."""
+    return await stripe_webhook(request)
 
-    event_type = request_body.get("type", "")
-    if event_type == "checkout.session.completed":
-        session = request_body.get("data", {}).get("object", {})
-        metadata = session.get("metadata", {})
-        user_id = metadata.get("user_id")
-        amount = float(metadata.get("amount_usd", "0"))
-        if user_id and amount > 0:
-            svc = _get_credit_service()
-            svc.purchase_credits(user_id, amount)
-            logger.info("Payment confirmed: user=%s amount=$%.2f", user_id, amount)
-    return {"received": True}
+
+# ---------------------------------------------------------------------------
+# Toss Payments (한국 결제 – 카카오페이, 네이버페이, 카드, 계좌이체 등)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/payments/toss/checkout")
+async def create_toss_checkout(req: CreateTossPaymentRequest, user: dict = Depends(get_current_user)):
+    """Create a Toss Payments session (KRW).
+
+    지원 결제 수단:
+    - 카드: 신용카드/체크카드
+    - 간편결제: 카카오페이, 네이버페이, 토스페이, PAYCO, 삼성페이 등
+    - 계좌이체: 실시간 계좌이체
+    - 가상계좌: 무통장입금
+    - 휴대폰: 휴대폰 소액결제
+    """
+    if req.amount_krw < 100:
+        raise HTTPException(400, "최소 결제 금액은 100원입니다")
+
+    try:
+        svc = _get_payment_service()
+        result = svc.create_toss_payment(
+            user_id=user["user_id"],
+            amount_krw=req.amount_krw,
+            order_name=req.order_name,
+            method=req.method,
+            success_url=req.success_url or None,
+            fail_url=req.fail_url or None,
+        )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    except Exception as e:
+        logger.error("Toss checkout error: %s", e)
+        raise HTTPException(500, f"결제 오류: {e}")
+
+
+@app.post("/api/payments/toss/confirm")
+async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
+    """Confirm (승인) a Toss payment after redirect.
+
+    토스페이먼츠 결제 성공 후 successUrl로 리다이렉트되면
+    프론트엔드에서 paymentKey, orderId, amount를 이 엔드포인트로 전송합니다.
+    """
+    try:
+        pay_svc = _get_payment_service()
+        credit_info = pay_svc.confirm_toss_payment(
+            payment_key=req.payment_key,
+            order_id=req.order_id,
+            amount=req.amount,
+        )
+
+        if credit_info:
+            # Credit the user's balance
+            credit_svc = _get_credit_service()
+            credit_svc.purchase_credits(
+                credit_info["user_id"],
+                credit_info["amount_usd"],
+            )
+            logger.info(
+                "Toss payment confirmed: user=%s amount=₩%d ($%.2f) method=%s",
+                credit_info["user_id"],
+                credit_info["amount_krw"],
+                credit_info["amount_usd"],
+                credit_info.get("method", ""),
+            )
+
+        return {
+            "status": "success",
+            "payment_id": credit_info["payment_id"],
+            "amount_krw": credit_info["amount_krw"],
+            "amount_usd": credit_info["amount_usd"],
+            "method": credit_info.get("method", ""),
+            "receipt_url": credit_info.get("receipt_url", ""),
+        }
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error("Toss confirm error: %s", e)
+        raise HTTPException(500, f"결제 승인 오류: {e}")
+
+
+@app.post("/api/payments/toss/cancel")
+async def cancel_toss_payment(req: CancelTossPaymentRequest, user: dict = Depends(get_current_user)):
+    """Cancel a Toss payment (환불)."""
+    try:
+        pay_svc = _get_payment_service()
+        result = pay_svc.cancel_toss_payment(
+            payment_key=req.payment_key,
+            cancel_reason=req.cancel_reason,
+        )
+        return {"status": "cancelled", "result": result}
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error("Toss cancel error: %s", e)
+        raise HTTPException(500, f"결제 취소 오류: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Payment History (unified)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/payments/history")
+async def get_payment_history(user: dict = Depends(get_current_user), limit: int = 50):
+    """Get the current user's payment history across all gateways."""
+    svc = _get_payment_service()
+    payments = svc.get_user_payments(user["user_id"], limit=limit)
+    return {"payments": payments}
 
 
 # ---------------------------------------------------------------------------
