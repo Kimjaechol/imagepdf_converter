@@ -518,7 +518,7 @@
 
     // ===== FILE OPERATIONS =====
     async function loadFile() {
-      const path = await window.electronAPI.selectFile();
+      const path = await window.electronAPI.selectHtmlFile();
       if (!path) return;
       const content = await window.electronAPI.readFile(path);
       if (content !== null) {

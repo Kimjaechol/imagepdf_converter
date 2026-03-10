@@ -41,6 +41,16 @@ app.add_middleware(
 
 _config: PipelineConfig | None = None
 _jobs: dict[str, dict[str, Any]] = {}  # job_id -> status
+_MAX_JOBS = 100  # Limit stored jobs to prevent memory leak
+
+
+def _cleanup_old_jobs():
+    """Remove completed/error jobs when the dict exceeds _MAX_JOBS."""
+    if len(_jobs) < _MAX_JOBS:
+        return
+    finished = [jid for jid, j in _jobs.items() if j["status"] in ("completed", "error")]
+    for jid in finished:
+        del _jobs[jid]
 _websockets: dict[str, WebSocket] = {}
 _credit_service: CreditService | None = None
 _auth_service: AuthService | None = None
@@ -288,6 +298,7 @@ async def convert_single(req: ConvertRequest, user: dict = Depends(get_current_u
     """Start a single PDF conversion job (authenticated, credit-checked)."""
     req.user_id = user["user_id"]
 
+    _cleanup_old_jobs()
     job_id = uuid.uuid4().hex[:12]
     _jobs[job_id] = {
         "status": "pending",
@@ -310,8 +321,9 @@ async def convert_single(req: ConvertRequest, user: dict = Depends(get_current_u
 
 
 @app.post("/api/convert/batch", response_model=JobStatus)
-async def convert_batch(req: BatchConvertRequest):
+async def convert_batch(req: BatchConvertRequest, user: dict = Depends(get_current_user)):
     """Start a batch conversion job for an entire folder."""
+    _cleanup_old_jobs()
     job_id = uuid.uuid4().hex[:12]
     _jobs[job_id] = {
         "status": "pending",
@@ -582,7 +594,7 @@ async def pymupdf_version():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/translate-html")
-async def translate_html(req: TranslateHtmlRequest):
+async def translate_html(req: TranslateHtmlRequest, user: dict = Depends(get_current_user)):
     """Translate HTML content via Gemini while preserving HTML tags."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -627,10 +639,16 @@ def _translate_html_sync(
         body_content = html
         tail_part = ""
     else:
-        body_tag_end = html.index(">", body_start) + 1
-        head_part = html[:body_tag_end]
-        body_content = html[body_tag_end:body_end]
-        tail_part = html[body_end:]
+        body_close = html.find(">", body_start)
+        if body_close == -1:
+            head_part = ""
+            body_content = html
+            tail_part = ""
+        else:
+            body_tag_end = body_close + 1
+            head_part = html[:body_tag_end]
+            body_content = html[body_tag_end:body_end]
+            tail_part = html[body_end:]
 
     # Chunk body content for large documents
     max_chunk = 30000  # characters per chunk
@@ -707,7 +725,7 @@ async def hancom_status():
 
 
 @app.post("/api/convert/document/batch")
-async def convert_document_batch(req: BatchDocumentConvertRequest):
+async def convert_document_batch(req: BatchDocumentConvertRequest, user: dict = Depends(get_current_user)):
     """Batch-convert multiple documents using Hancom DocsConverter (non-PDF).
 
     Files are uploaded to the remote Hancom server and converted via REST API.
@@ -819,7 +837,7 @@ def _batch_convert_sync(
 
 
 @app.post("/api/convert/document")
-async def convert_document(req: DocumentConvertRequest):
+async def convert_document(req: DocumentConvertRequest, user: dict = Depends(get_current_user)):
     """Convert a document to HTML.
 
     Non-PDF (HWP/HWPX/DOC/DOCX/XLS/XLSX/PPT/PPTX): uses 한컴 DocsConverter.
@@ -909,10 +927,10 @@ def _convert_document_sync(
     # Step 5: Generate Markdown
     markdown = None
     if want_md:
-        from backend.core.md_renderer import html_to_markdown
         try:
+            from backend.core.md_renderer import html_to_markdown
             markdown = html_to_markdown(html)
-        except Exception:
+        except (ImportError, Exception):
             markdown = _basic_html_to_markdown(html)
         md_path = Path(output_dir) / f"{stem}.md"
         md_path.write_text(markdown, encoding="utf-8")
@@ -1236,7 +1254,7 @@ async def create_toss_checkout(req: CreateTossPaymentRequest, user: dict = Depen
 
 
 @app.post("/api/payments/toss/confirm")
-async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
+async def confirm_toss_payment(req: ConfirmTossPaymentRequest, user: dict = Depends(get_current_user)):
     """Confirm (승인) a Toss payment after redirect.
 
     토스페이먼츠 결제 성공 후 successUrl로 리다이렉트되면
@@ -1253,10 +1271,14 @@ async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
         if not credit_info:
             raise HTTPException(400, "결제 기록을 찾을 수 없습니다")
 
+        # Verify the payment belongs to the authenticated user
+        if credit_info["user_id"] != user["user_id"]:
+            raise HTTPException(403, "결제 사용자가 일치하지 않습니다")
+
         # Credit the user's balance
         credit_svc = _get_credit_service()
         credit_svc.purchase_credits(
-            credit_info["user_id"],
+            user["user_id"],
             credit_info["amount_usd"],
         )
         logger.info(

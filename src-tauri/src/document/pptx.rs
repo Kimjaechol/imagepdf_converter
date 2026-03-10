@@ -349,6 +349,7 @@ fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
                         if !para_texts.is_empty() {
                             if is_title {
                                 for t in &para_texts {
+                                    let t = t.strip_prefix("__LIST_ITEM__:").unwrap_or(t);
                                     if !t.trim().is_empty() {
                                         html.push_str(&format!("<h1>{}</h1>\n", t));
                                     }
@@ -356,16 +357,36 @@ fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
                                 is_title = false;
                             } else if is_subtitle {
                                 for t in &para_texts {
+                                    let t = t.strip_prefix("__LIST_ITEM__:").unwrap_or(t);
                                     if !t.trim().is_empty() {
                                         html.push_str(&format!("<h2>{}</h2>\n", t));
                                     }
                                 }
                                 is_subtitle = false;
                             } else {
+                                // Group consecutive list items into <ul>
+                                let mut in_list = false;
                                 for t in &para_texts {
-                                    if !t.trim().is_empty() {
-                                        html.push_str(&format!("<p>{}</p>\n", t));
+                                    if let Some(content) = t.strip_prefix("__LIST_ITEM__:") {
+                                        if !content.trim().is_empty() {
+                                            if !in_list {
+                                                html.push_str("<ul>\n");
+                                                in_list = true;
+                                            }
+                                            html.push_str(&format!("<li>{}</li>\n", content));
+                                        }
+                                    } else {
+                                        if in_list {
+                                            html.push_str("</ul>\n");
+                                            in_list = false;
+                                        }
+                                        if !t.trim().is_empty() {
+                                            html.push_str(&format!("<p>{}</p>\n", t));
+                                        }
                                     }
+                                }
+                                if in_list {
+                                    html.push_str("</ul>\n");
                                 }
                             }
                             para_texts.clear();
@@ -374,8 +395,8 @@ fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
                     "p" if in_text_body => {
                         if !current_text.trim().is_empty() {
                             if is_list_item {
-                                let indent = "  ".repeat(list_level.max(0) as usize);
-                                para_texts.push(format!("{}• {}", indent, current_text));
+                                // Use a marker prefix so we can wrap in <ul><li> later
+                                para_texts.push(format!("__LIST_ITEM__:{}", current_text));
                             } else {
                                 para_texts.push(current_text.clone());
                             }

@@ -203,7 +203,14 @@ function createWindow() {
 ipcMain.handle("select-file", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openFile"],
-    filters: [{ name: "PDF Files", extensions: ["pdf"] }],
+    filters: [
+      { name: "지원 문서", extensions: ["pdf", "hwp", "hwpx", "doc", "docx", "xls", "xlsx", "ppt", "pptx"] },
+      { name: "PDF", extensions: ["pdf"] },
+      { name: "한글", extensions: ["hwp", "hwpx"] },
+      { name: "Word", extensions: ["doc", "docx"] },
+      { name: "Excel", extensions: ["xls", "xlsx"] },
+      { name: "PowerPoint", extensions: ["ppt", "pptx"] },
+    ],
   });
   return result.canceled ? null : result.filePaths[0];
 });
@@ -250,6 +257,25 @@ ipcMain.handle("save-file", async (_event, filePath, content) => {
 });
 
 ipcMain.handle("open-editor", async (_event, filePath) => {
+  // If filePath is a directory, find the first .html file inside it
+  let resolvedPath = filePath;
+  if (filePath) {
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        const files = fs.readdirSync(filePath);
+        const htmlFile = files.find((f) => /\.html?$/i.test(f));
+        if (htmlFile) {
+          resolvedPath = path.join(filePath, htmlFile);
+        } else {
+          resolvedPath = null; // No HTML file found, open editor empty
+        }
+      }
+    } catch {
+      // File doesn't exist or can't be read, proceed with the path as-is
+    }
+  }
+
   const editorWindow = new BrowserWindow({
     width: 1100,
     height: 750,
@@ -262,7 +288,7 @@ ipcMain.handle("open-editor", async (_event, filePath) => {
     },
     title: "HTML 에디터 - PDF 변환기",
   });
-  const query = filePath ? `?file=${encodeURIComponent(filePath)}` : "";
+  const query = resolvedPath ? `?file=${encodeURIComponent(resolvedPath)}` : "";
   editorWindow.loadFile(path.join(__dirname, "..", "public", "editor.html"), {
     search: query,
   });

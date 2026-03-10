@@ -35,7 +35,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 pip3 install --user --quiet \
     pymupdf Pillow pytesseract opencv-python-headless numpy scikit-learn \
     fastapi 'uvicorn[standard]' python-multipart websockets \
-    google-generativeai httpx pydantic pyyaml tqdm aiofiles
+    google-generativeai httpx pydantic pyyaml tqdm aiofiles stripe
 
 pip3 install --user --quiet torch torchvision --index-url https://download.pytorch.org/whl/cpu 2>/dev/null || true
 pip3 install --user --quiet surya-ocr 2>/dev/null || true
