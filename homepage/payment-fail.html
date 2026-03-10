@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>결제 실패 - MoA 문서 변환기</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --bg-card: #12121a; --surface: #16161f;
+      --border: #2a2a3a; --text: #e4e4ed; --text-muted: #8888a0;
+      --primary: #6366f1; --error: #f87171; --error-bg: rgba(248,113,113,0.1);
+      --gradient: linear-gradient(135deg, #6366f1, #22d3ee);
+      --radius-lg: 20px;
+      --font: 'Inter', 'Noto Sans KR', -apple-system, sans-serif;
+    }
+    body {
+      font-family: var(--font); background: var(--bg); color: var(--text);
+      line-height: 1.7; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .result-container {
+      max-width: 520px; width: 100%; margin: 24px; padding: 48px 36px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); text-align: center;
+    }
+    .result-icon {
+      width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 24px;
+      display: flex; align-items: center; justify-content: center; font-size: 40px;
+      background: var(--error-bg);
+    }
+    .result-title { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: var(--error); }
+    .result-desc { color: var(--text-muted); font-size: 15px; margin-bottom: 12px; }
+    .error-details {
+      background: var(--surface); border-radius: 12px; padding: 16px;
+      margin-bottom: 28px; text-align: left;
+    }
+    .error-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .error-row:last-child { border-bottom: none; }
+    .error-label { color: var(--text-muted); }
+    .error-value { color: var(--text); font-weight: 500; }
+    .result-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      font-family: var(--font); font-weight: 600; font-size: 15px;
+      border: none; border-radius: 10px; cursor: pointer;
+      padding: 12px 28px; transition: all 0.2s; text-decoration: none;
+    }
+    .btn-primary { background: var(--gradient); color: #fff; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(99,102,241,0.3); }
+    .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--text-muted); color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="result-container" id="result-container">
+    <div class="result-icon">&#x274C;</div>
+    <h1 class="result-title">결제가 취소되었습니다</h1>
+    <p class="result-desc" id="error-message">결제가 완료되지 않았습니다.</p>
+    <div class="error-details" id="error-details" style="display:none"></div>
+    <div class="result-actions">
+      <a href="/#pricing" class="btn btn-primary">다시 시도</a>
+      <a href="/" class="btn btn-ghost">홈으로</a>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const message = params.get('message');
+      const orderId = params.get('orderId');
+
+      // Detect gateway from URL parameters
+      const isToss = !!code || !!orderId;
+      const isStripeCancel = !isToss;
+
+      const msgEl = document.getElementById('error-message');
+      const detailsEl = document.getElementById('error-details');
+
+      if (isStripeCancel) {
+        document.querySelector('.result-title').textContent = '결제가 취소되었습니다';
+        msgEl.textContent = 'Stripe 결제가 취소되었습니다. 금액이 청구되지 않았습니다.';
+        return;
+      }
+
+      // Toss Payments failure
+      if (message) {
+        msgEl.textContent = decodeURIComponent(message);
+      }
+
+      if (code || orderId) {
+        detailsEl.innerHTML = '';
+        if (code) {
+          const row = document.createElement('div');
+          row.className = 'error-row';
+          row.innerHTML = '<span class="error-label">오류 코드: </span>';
+          const val = document.createElement('span');
+          val.className = 'error-value';
+          val.textContent = code;
+          row.appendChild(val);
+          detailsEl.appendChild(row);
+        }
+        if (orderId) {
+          const row = document.createElement('div');
+          row.className = 'error-row';
+          row.innerHTML = '<span class="error-label">주문번호: </span>';
+          const val = document.createElement('span');
+          val.className = 'error-value';
+          val.textContent = orderId;
+          row.appendChild(val);
+          detailsEl.appendChild(row);
+        }
+        detailsEl.style.display = 'block';
+      }
+
+      // Common Toss error code messages
+      const errorMessages = {
+        'PAY_PROCESS_CANCELED': '사용자가 결제를 취소했습니다.',
+        'PAY_PROCESS_ABORTED': '결제가 중단되었습니다.',
+        'REJECT_CARD_COMPANY': '카드사에서 거절했습니다. 다른 결제 수단을 이용해주세요.',
+        'BELOW_MINIMUM_AMOUNT': '최소 결제 금액 미만입니다.',
+        'EXCEED_MAX_DAILY_PAYMENT_COUNT': '일일 결제 횟수를 초과했습니다.',
+        'NOT_ALLOWED_POINT_USE': '포인트 사용이 불가한 카드입니다.',
+      };
+
+      if (code && errorMessages[code] && !message) {
+        msgEl.textContent = errorMessages[code];
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -200,7 +200,8 @@ class PaymentService:
 
         payment_id = f"toss_{int(time.time())}_{user_id[:8]}"
 
-        # KRW -> USD conversion (approximate, for credit calculation)
+        # KRW -> USD conversion using auto-updated exchange rate
+        # ExchangeRateService keeps KRW_USD_RATE env var updated automatically
         exchange_rate = float(os.environ.get("KRW_USD_RATE", "1350"))
         amount_usd = round(amount_krw / exchange_rate, 2)
 
