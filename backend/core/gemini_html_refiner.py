@@ -170,7 +170,10 @@ def _refine_large_html(model_name: str, api_key: str, html: str, doc_name: str, 
             return _refine_chunk(model_name, api_key, html, doc_name, doc_type)
         return html
 
-    body_tag_end = html.index(">", body_start) + 1
+    body_close = html.find(">", body_start)
+    if body_close == -1:
+        return html  # Malformed HTML, return as-is
+    body_tag_end = body_close + 1
     head_part = html[:body_tag_end]
     body_content = html[body_tag_end:body_end]
     tail_part = html[body_end:]

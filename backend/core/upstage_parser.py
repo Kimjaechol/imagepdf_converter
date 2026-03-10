@@ -184,7 +184,7 @@ class UpstageDocumentParser:
                             "model": "document-parse",
                             "ocr": "force" if mode == "enhanced" else "auto",
                             "mode": mode if mode in ("standard", "enhanced", "auto") else "auto",
-                            "output_formats": "['html']",
+                            "output_formats": '["html"]',
                             "coordinates": "true",
                         },
                         timeout=300,  # 5 min per chunk
