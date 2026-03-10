@@ -3,6 +3,11 @@
   "buildCommand": null,
   "framework": null,
   "rewrites": [
+    { "source": "/payment/success", "destination": "/payment-success.html" },
+    { "source": "/payment/toss/success", "destination": "/payment-success.html" },
+    { "source": "/payment/fail", "destination": "/payment-fail.html" },
+    { "source": "/payment/toss/fail", "destination": "/payment-fail.html" },
+    { "source": "/payment/cancel", "destination": "/payment-fail.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

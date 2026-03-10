@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>결제 완료 - MoA 문서 변환기</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --bg-card: #12121a; --surface: #16161f;
+      --border: #2a2a3a; --text: #e4e4ed; --text-muted: #8888a0;
+      --primary: #6366f1; --primary-light: #818cf8;
+      --success: #34d399; --success-bg: rgba(52,211,153,0.1);
+      --error: #f87171; --error-bg: rgba(248,113,113,0.1);
+      --gradient: linear-gradient(135deg, #6366f1, #22d3ee);
+      --radius: 12px; --radius-lg: 20px;
+      --font: 'Inter', 'Noto Sans KR', -apple-system, sans-serif;
+    }
+    body {
+      font-family: var(--font); background: var(--bg); color: var(--text);
+      line-height: 1.7; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .result-container {
+      max-width: 520px; width: 100%; margin: 24px; padding: 48px 36px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); text-align: center;
+    }
+    .result-icon {
+      width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 24px;
+      display: flex; align-items: center; justify-content: center; font-size: 40px;
+    }
+    .result-icon.success { background: var(--success-bg); }
+    .result-icon.error { background: var(--error-bg); }
+    .result-title { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+    .result-title.success { color: var(--success); }
+    .result-title.error { color: var(--error); }
+    .result-desc { color: var(--text-muted); font-size: 15px; margin-bottom: 28px; }
+    .result-details {
+      background: var(--surface); border-radius: var(--radius);
+      padding: 20px; margin-bottom: 28px; text-align: left;
+    }
+    .detail-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { color: var(--text-muted); font-size: 14px; }
+    .detail-value { font-weight: 600; font-size: 14px; }
+    .detail-value.amount { color: var(--primary-light); font-size: 16px; }
+    .result-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      font-family: var(--font); font-weight: 600; font-size: 15px;
+      border: none; border-radius: 10px; cursor: pointer;
+      padding: 12px 28px; transition: all 0.2s; text-decoration: none;
+    }
+    .btn-primary { background: var(--gradient); color: #fff; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(99,102,241,0.3); }
+    .btn-ghost {
+      background: transparent; color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { border-color: var(--text-muted); color: var(--text); }
+    .receipt-link {
+      display: inline-block; margin-top: 12px; color: var(--primary-light);
+      font-size: 13px; text-decoration: underline;
+    }
+    .loading { color: var(--text-muted); font-size: 15px; }
+    .spinner {
+      width: 40px; height: 40px; border: 3px solid var(--border);
+      border-top-color: var(--primary); border-radius: 50%;
+      animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error-code { font-family: monospace; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="result-container" id="result-container">
+    <div class="spinner"></div>
+    <p class="loading">결제를 확인하고 있습니다...</p>
+  </div>
+
+  <script>
+    // API base: use configured value, or infer from current origin
+    // On Vercel (frontend-only), PAYMENT_API_BASE should point to Railway backend
+    // On Railway (API + static), same-origin works
+    const API_BASE = window.PAYMENT_API_BASE || '';
+
+    function getParams() {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        // Toss Payments params
+        paymentKey: params.get('paymentKey'),
+        orderId: params.get('orderId'),
+        amount: params.get('amount'),
+        paymentType: params.get('paymentType'),
+        // Stripe params
+        sessionId: params.get('session_id'),
+        // Gateway detection
+        gateway: params.get('paymentKey') ? 'toss' : 'stripe',
+      };
+    }
+
+    // Validate receipt URL (only allow https)
+    function safeUrl(url) {
+      if (!url) return '';
+      try {
+        const parsed = new URL(url);
+        return (parsed.protocol === 'https:') ? url : '';
+      } catch { return ''; }
+    }
+
+    function makeDetailRow(label, value, cls) {
+      const row = document.createElement('div');
+      row.className = 'detail-row';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'detail-label';
+      labelEl.textContent = label;
+      const valEl = document.createElement('span');
+      valEl.className = 'detail-value' + (cls ? ' ' + cls : '');
+      valEl.textContent = value;
+      row.appendChild(labelEl);
+      row.appendChild(valEl);
+      return row;
+    }
+
+    function renderSuccess(data) {
+      const container = document.getElementById('result-container');
+      const gateway = data.gateway || 'unknown';
+      const isToss = gateway === 'toss';
+
+      container.innerHTML = '';
+
+      const icon = document.createElement('div');
+      icon.className = 'result-icon success';
+      icon.innerHTML = '&#x2705;';
+      container.appendChild(icon);
+
+      const title = document.createElement('h1');
+      title.className = 'result-title success';
+      title.textContent = '결제가 완료되었습니다';
+      container.appendChild(title);
+
+      const desc = document.createElement('p');
+      desc.className = 'result-desc';
+      desc.textContent = '크레딧이 충전되었습니다. 이제 문서 변환을 이용하실 수 있습니다.';
+      container.appendChild(desc);
+
+      const details = document.createElement('div');
+      details.className = 'result-details';
+      if (isToss) {
+        details.appendChild(makeDetailRow('결제 금액', '\u20A9' + Number(data.amount_krw).toLocaleString('ko-KR'), 'amount'));
+        details.appendChild(makeDetailRow('충전 크레딧', '$' + Number(data.amount_usd).toFixed(2), 'amount'));
+        details.appendChild(makeDetailRow('결제 수단', data.method || '카드'));
+        details.appendChild(makeDetailRow('주문번호', data.payment_id || ''));
+      } else {
+        details.appendChild(makeDetailRow('충전 크레딧', '$' + Number(data.amount_usd || 0).toFixed(2), 'amount'));
+        details.appendChild(makeDetailRow('결제 수단', 'Card (Stripe)'));
+        details.appendChild(makeDetailRow('주문번호', data.payment_id || data.session_id || ''));
+      }
+      container.appendChild(details);
+
+      const receiptUrl = safeUrl(data.receipt_url);
+      if (receiptUrl) {
+        const link = document.createElement('a');
+        link.href = receiptUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'receipt-link';
+        link.textContent = '영수증 보기';
+        container.appendChild(link);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'result-actions';
+      actions.innerHTML = '<a href="/" class="btn btn-primary">홈으로 돌아가기</a><a href="/#pricing" class="btn btn-ghost">추가 충전</a>';
+      container.appendChild(actions);
+    }
+
+    function renderError(message, code) {
+      const container = document.getElementById('result-container');
+      container.innerHTML = '';
+
+      const icon = document.createElement('div');
+      icon.className = 'result-icon error';
+      icon.innerHTML = '&#x274C;';
+      container.appendChild(icon);
+
+      const title = document.createElement('h1');
+      title.className = 'result-title error';
+      title.textContent = '결제에 실패했습니다';
+      container.appendChild(title);
+
+      const desc = document.createElement('p');
+      desc.className = 'result-desc';
+      desc.textContent = message || '결제 처리 중 오류가 발생했습니다.';
+      container.appendChild(desc);
+
+      if (code) {
+        const codeEl = document.createElement('p');
+        codeEl.className = 'error-code';
+        codeEl.textContent = '오류 코드: ' + code;
+        container.appendChild(codeEl);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'result-actions';
+      actions.style.marginTop = '28px';
+      actions.innerHTML = '<a href="/#pricing" class="btn btn-primary">다시 시도</a><a href="/" class="btn btn-ghost">홈으로</a>';
+      container.appendChild(actions);
+    }
+
+    async function confirmTossPayment(params) {
+      try {
+        const res = await fetch(API_BASE + '/api/payments/toss/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            payment_key: params.paymentKey,
+            order_id: params.orderId,
+            amount: parseInt(params.amount, 10),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          renderError(data.detail || '결제 승인에 실패했습니다.', data.code || '');
+          return;
+        }
+        data.gateway = 'toss';
+        renderSuccess(data);
+      } catch (err) {
+        renderError('서버와 통신할 수 없습니다. 잠시 후 다시 시도해주세요.');
+      }
+    }
+
+    async function handleStripeSuccess(params) {
+      // Stripe payments are confirmed via webhook; the success page just shows confirmation
+      renderSuccess({
+        gateway: 'stripe',
+        session_id: params.sessionId,
+        amount_usd: 0, // We don't know the amount from the URL alone
+      });
+
+      // Try to fetch payment details from the backend
+      try {
+        const token = localStorage.getItem('moa_token');
+        if (token) {
+          const res = await fetch(API_BASE + '/api/payments/history?limit=1', {
+            headers: { 'Authorization': 'Bearer ' + token },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.payments && data.payments.length > 0) {
+              const latest = data.payments[0];
+              if (latest.gateway === 'stripe' && latest.status === 'completed') {
+                renderSuccess({
+                  gateway: 'stripe',
+                  amount_usd: latest.amount_usd,
+                  payment_id: latest.payment_id,
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // Stripe success is still valid even without details
+      }
+    }
+
+    (async function init() {
+      const params = getParams();
+
+      if (params.gateway === 'toss' && params.paymentKey && params.orderId && params.amount) {
+        await confirmTossPayment(params);
+      } else if (params.sessionId) {
+        await handleStripeSuccess(params);
+      } else {
+        renderError('유효하지 않은 결제 정보입니다.');
+      }
+    })();
+  </script>
+</body>
+</html>

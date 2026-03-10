@@ -20,6 +20,7 @@ from backend.models.schema import PdfJob
 from backend.services.credit_service import CreditService
 from backend.services.auth_service import AuthService
 from backend.services.payment_service import PaymentService
+from backend.services.exchange_rate_service import ExchangeRateService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ _websockets: dict[str, WebSocket] = {}
 _credit_service: CreditService | None = None
 _auth_service: AuthService | None = None
 _payment_service: PaymentService | None = None
+_exchange_rate_service: ExchangeRateService | None = None
 
 
 def _get_credit_service() -> CreditService:
@@ -65,6 +67,14 @@ def _get_payment_service() -> PaymentService:
     if _payment_service is None:
         _payment_service = PaymentService(data_dir="data")
     return _payment_service
+
+
+def _get_exchange_rate_service() -> ExchangeRateService:
+    global _exchange_rate_service
+    if _exchange_rate_service is None:
+        _exchange_rate_service = ExchangeRateService(data_dir="data")
+        _exchange_rate_service.start()
+    return _exchange_rate_service
 
 
 async def get_current_user(authorization: str = Header(default="")) -> dict:
@@ -1067,7 +1077,8 @@ async def get_payment_gateways():
         os.environ.get("TOSS_CLIENT_KEY", "") and
         os.environ.get("TOSS_SECRET_KEY", "")
     )
-    exchange_rate = float(os.environ.get("KRW_USD_RATE", "1350"))
+    exchange_svc = _get_exchange_rate_service()
+    exchange_rate = exchange_svc.rate
 
     return {
         "gateways": [
@@ -1239,20 +1250,22 @@ async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
             amount=req.amount,
         )
 
-        if credit_info:
-            # Credit the user's balance
-            credit_svc = _get_credit_service()
-            credit_svc.purchase_credits(
-                credit_info["user_id"],
-                credit_info["amount_usd"],
-            )
-            logger.info(
-                "Toss payment confirmed: user=%s amount=₩%d ($%.2f) method=%s",
-                credit_info["user_id"],
-                credit_info["amount_krw"],
-                credit_info["amount_usd"],
-                credit_info.get("method", ""),
-            )
+        if not credit_info:
+            raise HTTPException(400, "결제 기록을 찾을 수 없습니다")
+
+        # Credit the user's balance
+        credit_svc = _get_credit_service()
+        credit_svc.purchase_credits(
+            credit_info["user_id"],
+            credit_info["amount_usd"],
+        )
+        logger.info(
+            "Toss payment confirmed: user=%s amount=₩%d ($%.2f) method=%s",
+            credit_info["user_id"],
+            credit_info["amount_krw"],
+            credit_info["amount_usd"],
+            credit_info.get("method", ""),
+        )
 
         return {
             "status": "success",
@@ -1262,6 +1275,8 @@ async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
             "method": credit_info.get("method", ""),
             "receipt_url": credit_info.get("receipt_url", ""),
         }
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -1284,6 +1299,25 @@ async def cancel_toss_payment(req: CancelTossPaymentRequest, user: dict = Depend
     except Exception as e:
         logger.error("Toss cancel error: %s", e)
         raise HTTPException(500, f"결제 취소 오류: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Exchange Rate
+# ---------------------------------------------------------------------------
+
+@app.get("/api/exchange-rate")
+async def get_exchange_rate():
+    """Get the current KRW/USD exchange rate."""
+    svc = _get_exchange_rate_service()
+    return svc.info
+
+
+@app.post("/api/exchange-rate/refresh")
+async def refresh_exchange_rate(user: dict = Depends(get_current_user)):
+    """Force refresh the exchange rate from external APIs (authenticated)."""
+    svc = _get_exchange_rate_service()
+    result = await asyncio.get_event_loop().run_in_executor(None, svc.force_update)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1457,6 +1491,19 @@ def _run_batch_conversion(job_id: str, req: BatchConvertRequest) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+@app.on_event("startup")
+async def _startup():
+    """Initialize background services on startup."""
+    _get_exchange_rate_service()  # starts auto-update timer
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    """Clean up background services."""
+    if _exchange_rate_service:
+        _exchange_rate_service.stop()
+
 
 def main():
     import uvicorn
