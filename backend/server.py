@@ -594,7 +594,7 @@ async def pymupdf_version():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/translate-html")
-async def translate_html(req: TranslateHtmlRequest):
+async def translate_html(req: TranslateHtmlRequest, user: dict = Depends(get_current_user)):
     """Translate HTML content via Gemini while preserving HTML tags."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -725,7 +725,7 @@ async def hancom_status():
 
 
 @app.post("/api/convert/document/batch")
-async def convert_document_batch(req: BatchDocumentConvertRequest):
+async def convert_document_batch(req: BatchDocumentConvertRequest, user: dict = Depends(get_current_user)):
     """Batch-convert multiple documents using Hancom DocsConverter (non-PDF).
 
     Files are uploaded to the remote Hancom server and converted via REST API.
@@ -837,7 +837,7 @@ def _batch_convert_sync(
 
 
 @app.post("/api/convert/document")
-async def convert_document(req: DocumentConvertRequest):
+async def convert_document(req: DocumentConvertRequest, user: dict = Depends(get_current_user)):
     """Convert a document to HTML.
 
     Non-PDF (HWP/HWPX/DOC/DOCX/XLS/XLSX/PPT/PPTX): uses 한컴 DocsConverter.
@@ -1254,7 +1254,7 @@ async def create_toss_checkout(req: CreateTossPaymentRequest, user: dict = Depen
 
 
 @app.post("/api/payments/toss/confirm")
-async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
+async def confirm_toss_payment(req: ConfirmTossPaymentRequest, user: dict = Depends(get_current_user)):
     """Confirm (승인) a Toss payment after redirect.
 
     토스페이먼츠 결제 성공 후 successUrl로 리다이렉트되면
@@ -1271,10 +1271,14 @@ async def confirm_toss_payment(req: ConfirmTossPaymentRequest):
         if not credit_info:
             raise HTTPException(400, "결제 기록을 찾을 수 없습니다")
 
+        # Verify the payment belongs to the authenticated user
+        if credit_info["user_id"] != user["user_id"]:
+            raise HTTPException(403, "결제 사용자가 일치하지 않습니다")
+
         # Credit the user's balance
         credit_svc = _get_credit_service()
         credit_svc.purchase_credits(
-            credit_info["user_id"],
+            user["user_id"],
             credit_info["amount_usd"],
         )
         logger.info(

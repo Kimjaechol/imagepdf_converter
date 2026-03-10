@@ -172,7 +172,7 @@ pub async fn convert_document(
             let backend_healthy = crate::backend::process::health_check().await;
             if backend_healthy {
                 let hc_result = convert_document_via_backend(
-                    &input_path, &out_dir, &output_formats,
+                    &app, &input_path, &out_dir, &output_formats,
                     do_translate, &src_lang, &tgt_lang,
                 ).await;
 
@@ -204,7 +204,7 @@ pub async fn convert_document(
             if do_translate {
                 if let Some(ref html) = result.html {
                     if let Ok(translated) = translate_html_via_backend(
-                        html, &src_lang, &tgt_lang,
+                        &app, html, &src_lang, &tgt_lang,
                     ).await {
                         let stem = std::path::Path::new(&input_path)
                             .file_stem()
@@ -273,6 +273,7 @@ pub async fn convert_document(
 
 /// Call the Python backend's /api/convert/document endpoint (Hancom DocsConverter)
 async fn convert_document_via_backend(
+    app: &tauri::AppHandle,
     input_path: &str,
     output_dir: &str,
     output_formats: &[String],
@@ -293,6 +294,7 @@ async fn convert_document_via_backend(
 
     let resp = client
         .post(format!("{}/api/convert/document", backend_url()))
+        .header("Authorization", auth_header(app))
         .json(&payload)
         .timeout(std::time::Duration::from_secs(300))
         .send()
@@ -312,6 +314,7 @@ async fn convert_document_via_backend(
 
 /// Call the Python backend's /api/translate-html endpoint
 async fn translate_html_via_backend(
+    app: &tauri::AppHandle,
     html: &str,
     source_language: &str,
     target_language: &str,
@@ -327,6 +330,7 @@ async fn translate_html_via_backend(
 
     let resp = client
         .post(format!("{}/api/translate-html", backend_url()))
+        .header("Authorization", auth_header(app))
         .json(&TranslateRequest {
             html,
             source_language,
