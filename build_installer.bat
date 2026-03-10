@@ -68,7 +68,7 @@ if exist "%PORTABLE_PYTHON%\python.exe" (
     "%PORTABLE_PYTHON%\python.exe" -m pip install --no-warn-script-location --quiet ^
         pymupdf Pillow pytesseract opencv-python-headless numpy scikit-learn ^
         fastapi "uvicorn[standard]" python-multipart websockets ^
-        google-generativeai httpx pydantic pyyaml tqdm aiofiles
+        google-generativeai httpx pydantic pyyaml tqdm aiofiles stripe
 
     echo Installing PyTorch CPU...
     "%PORTABLE_PYTHON%\python.exe" -m pip install --no-warn-script-location --quiet ^

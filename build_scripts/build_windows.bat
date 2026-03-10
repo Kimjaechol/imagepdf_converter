@@ -54,8 +54,9 @@ powershell -Command "Expand-Archive -Path '%PYTHON_ZIP%' -DestinationPath '%PORT
 
 :: pip 사용을 위해 python3XX._pth 파일 수정 (import site 활성화)
 set PTH_FILE=%PORTABLE_DIR%\python%PYTHON_SHORT%._pth
-echo python%PYTHON_SHORT%.zip>> "%PTH_FILE%"
+echo python%PYTHON_SHORT%.zip> "%PTH_FILE%"
 echo .>> "%PTH_FILE%"
+echo Lib\site-packages>> "%PTH_FILE%"
 echo import site>> "%PTH_FILE%"
 
 :: ──────────────────────────────────────────────
@@ -95,7 +96,8 @@ echo [5/7] Python 라이브러리 설치 중 (약 5-10분 소요)...
     pydantic ^
     pyyaml ^
     tqdm ^
-    aiofiles
+    aiofiles ^
+    stripe
 
 if %errorlevel% neq 0 (
     echo [오류] 기본 패키지 설치 실패!

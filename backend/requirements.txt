@@ -17,7 +17,7 @@ python-multipart>=0.0.6
 websockets>=11.0
 
 # LLM integration
-google-generativeai>=0.3.0
+google-generativeai>=0.8.0
 httpx>=0.24.0
 
 # Utilities
@@ -28,4 +28,3 @@ aiofiles>=23.0.0
 
 # Payments
 stripe>=7.0.0
-httpx>=0.24.0
