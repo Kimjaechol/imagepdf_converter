@@ -1247,7 +1247,8 @@ def _run_batch_conversion(job_id: str, req: BatchConvertRequest) -> None:
 def main():
     import uvicorn
     port = int(os.environ.get("PORT", "8765"))
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    host = os.environ.get("HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
