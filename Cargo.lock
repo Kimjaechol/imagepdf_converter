@@ -2519,6 +2519,7 @@ dependencies = [
  "dirs-next",
  "html-escape",
  "lopdf",
+ "open",
  "portpicker",
  "quick-xml 0.36.2",
  "regex",
