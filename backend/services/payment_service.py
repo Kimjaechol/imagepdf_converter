@@ -143,7 +143,7 @@ class PaymentService:
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
             return event
-        except (stripe.error.SignatureVerificationError, ValueError) as e:
+        except (stripe.SignatureVerificationError, ValueError) as e:
             logger.error("Stripe webhook verification failed: %s", e)
             return None
 

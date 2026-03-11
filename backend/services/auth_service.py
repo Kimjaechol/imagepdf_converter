@@ -96,13 +96,37 @@ class AuthService:
                     display_name TEXT NOT NULL DEFAULT '',
                     password_hash TEXT NOT NULL,
                     password_salt TEXT NOT NULL,
+                    phone TEXT NOT NULL DEFAULT '',
+                    nationality TEXT NOT NULL DEFAULT '',
+                    gender TEXT NOT NULL DEFAULT '',
+                    birth_date TEXT NOT NULL DEFAULT '',
                     created_at REAL NOT NULL,
                     last_login REAL
                 )
             """)
             conn.commit()
+            # Migrate existing tables: add new columns if missing
+            self._migrate_columns(conn)
 
-    def register(self, email: str, password: str, display_name: str = "") -> dict:
+    def _migrate_columns(self, conn: sqlite3.Connection):
+        """Add new profile columns to existing users table if missing."""
+        cursor = conn.execute("PRAGMA table_info(users)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        new_cols = {
+            "phone": "TEXT NOT NULL DEFAULT ''",
+            "nationality": "TEXT NOT NULL DEFAULT ''",
+            "gender": "TEXT NOT NULL DEFAULT ''",
+            "birth_date": "TEXT NOT NULL DEFAULT ''",
+        }
+        for col, col_def in new_cols.items():
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_def}")
+                logger.info("Migrated users table: added column '%s'", col)
+        conn.commit()
+
+    def register(self, email: str, password: str, display_name: str = "",
+                 phone: str = "", nationality: str = "", gender: str = "",
+                 birth_date: str = "") -> dict:
         """Register a new user. Returns user info + token."""
         email = email.strip().lower()
         if not email or not password:
@@ -114,12 +138,16 @@ class AuthService:
         hash_hex, salt = _hash_password(password)
         now = time.time()
 
+        display_name = display_name or email.split("@")[0]
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
-                    "INSERT INTO users (id, email, display_name, password_hash, password_salt, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (user_id, email, display_name or email.split("@")[0], hash_hex, salt, now),
+                    "INSERT INTO users (id, email, display_name, password_hash, password_salt, "
+                    "phone, nationality, gender, birth_date, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, email, display_name, hash_hex, salt,
+                     phone.strip(), nationality.strip(), gender.strip(),
+                     birth_date.strip(), now),
                 )
                 conn.commit()
         except sqlite3.IntegrityError:
@@ -129,7 +157,7 @@ class AuthService:
         return {
             "user_id": user_id,
             "email": email,
-            "display_name": display_name or email.split("@")[0],
+            "display_name": display_name,
             "token": token,
         }
 
@@ -170,7 +198,8 @@ class AuthService:
         """Get user info by ID."""
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
-                "SELECT id, email, display_name, created_at FROM users WHERE id = ?",
+                "SELECT id, email, display_name, phone, nationality, gender, "
+                "birth_date, created_at FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
         if not row:
@@ -179,5 +208,9 @@ class AuthService:
             "user_id": row[0],
             "email": row[1],
             "display_name": row[2],
-            "created_at": row[3],
+            "phone": row[3],
+            "nationality": row[4],
+            "gender": row[5],
+            "birth_date": row[6],
+            "created_at": row[7],
         }
