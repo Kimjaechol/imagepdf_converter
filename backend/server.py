@@ -107,6 +107,42 @@ def _get_config() -> PipelineConfig:
             _config = PipelineConfig.from_yaml(config_path)
         else:
             _config = PipelineConfig()
+
+        # Auto-select best pipeline mode based on available API keys.
+        # If Upstage key is configured, prefer upstage_hybrid for highest accuracy.
+        # If only Gemini key is available, use unified_vision.
+        # If neither, fall back to standard (local).
+        upstage_key = os.environ.get("UPSTAGE_API_KEY", "")
+        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+
+        if _config.pipeline_mode == "upstage_hybrid" and not upstage_key and not gemini_key:
+            logger.info(
+                "upstage_hybrid mode configured but no API keys available. "
+                "Falling back to standard mode."
+            )
+            _config.pipeline_mode = "standard"
+        elif _config.pipeline_mode == "upstage_hybrid" and not upstage_key and gemini_key:
+            logger.info(
+                "upstage_hybrid mode configured but UPSTAGE_API_KEY not set. "
+                "Digital PDFs will use PyMuPDF + Gemini. "
+                "For scanned PDFs, will fall back to unified_vision."
+            )
+            # Keep upstage_hybrid — the pipeline already handles missing
+            # UPSTAGE_API_KEY by auto-falling back to unified_vision for
+            # scanned PDFs while still using PyMuPDF for digital PDFs.
+        elif _config.pipeline_mode == "unified_vision" and not gemini_key:
+            logger.info(
+                "unified_vision mode configured but GEMINI_API_KEY not set. "
+                "Falling back to standard mode."
+            )
+            _config.pipeline_mode = "standard"
+
+        logger.info(
+            "Pipeline config: mode=%s, upstage_key=%s, gemini_key=%s",
+            _config.pipeline_mode,
+            "configured" if upstage_key else "not set",
+            "configured" if gemini_key else "not set",
+        )
     return _config
 
 

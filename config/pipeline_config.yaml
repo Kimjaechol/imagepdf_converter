@@ -1,12 +1,20 @@
 # Pipeline Configuration
 pipeline:
-  mode: unified_vision  # unified_vision (1 Gemini call) | standard (multi-step)
+  mode: upstage_hybrid  # upstage_hybrid (Upstage OCR + Gemini) | unified_vision (Gemini only) | standard (local multi-step)
   pages_per_chunk: 10
   max_workers: 8
   dpi: 300
   output_formats:
     - html
     - markdown
+
+# Upstage Document Parse Settings
+upstage:
+  mode: auto            # auto | standard | enhanced
+  max_workers: 4
+  force_enhanced_scanned: true
+  visual_batch_size: 3
+  max_structure_change: 0.3
 
 # Layout Analysis
 layout:
