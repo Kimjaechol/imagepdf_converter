@@ -216,6 +216,7 @@ export async function setAuthToken(token) {
 export function clearAuth() {
   localStorage.removeItem("auth_token");
   localStorage.removeItem("user_info");
+  localStorage.removeItem("refresh_token");
 }
 
 export function getUserInfo() {

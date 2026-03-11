@@ -357,6 +357,104 @@ body {
 .result-file .file-icon { font-size: 20px; }
 .result-file .file-name { font-size: 13px; }
 
+/* ─── Login Overlay ─── */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.login-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.login-card {
+  width: 380px;
+  max-width: 90vw;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 40px 32px;
+  text-align: center;
+}
+.login-logo { font-size: 48px; margin-bottom: 12px; }
+.login-title { font-size: 20px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+.login-subtitle { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 28px; }
+
+.login-field {
+  text-align: left;
+  margin-bottom: 14px;
+}
+.login-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+.login-field input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+.login-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.login-field input::placeholder { color: var(--text-muted); }
+
+.login-error {
+  font-size: 12px;
+  color: var(--error);
+  min-height: 18px;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.login-btn { margin-top: 6px; }
+.login-btn.btn-primary { padding: 11px 16px; font-size: 14px; }
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.login-divider::before, .login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.login-divider span { padding: 0 12px; }
+
+.login-guest-btn {
+  font-size: 12px !important;
+  color: var(--text-muted) !important;
+  border-color: transparent !important;
+}
+.login-guest-btn:hover {
+  color: var(--text-secondary) !important;
+  border-color: var(--border) !important;
+}
+
+.login-footer {
+  margin-top: 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

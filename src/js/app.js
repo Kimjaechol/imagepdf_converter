@@ -32,16 +32,25 @@ function cleanupWs() {
 // ─── Initialization ─────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
+  setupLoginOverlay();
   await checkBackendHealth();
   setInterval(checkBackendHealth, 10000);
-  // Restore auth state
+
+  // Restore auth state – if valid token exists, skip login overlay
   const token = api.getAuthToken();
   if (token) {
     try {
       await api.setAuthToken(token);
-    } catch { /* ok */ }
+      const userInfo = api.getUserInfo();
+      if (userInfo) {
+        hideLoginOverlay();
+        updateAuthUI();
+        return;
+      }
+    } catch { /* token invalid, show login */ }
   }
-  updateAuthUI();
+  // No valid session – show login overlay
+  showLoginOverlay();
 });
 
 async function checkBackendHealth() {
@@ -580,6 +589,132 @@ function showSettingsStatus(message, type) {
   }
 }
 
+// ─── Login Overlay ───────────────────────────────────────
+function setupLoginOverlay() {
+  const overlay = $("#login-overlay");
+  if (!overlay) return;
+
+  // Login button
+  $("#overlay-btn-login")?.addEventListener("click", handleOverlayLogin);
+
+  // Register button – first click shows name field, second click registers
+  let registerMode = false;
+  $("#overlay-btn-register")?.addEventListener("click", () => {
+    if (!registerMode) {
+      const nameField = $("#login-name-field");
+      if (nameField) nameField.style.display = "block";
+      registerMode = true;
+      $("#overlay-btn-register").textContent = "가입하기";
+      return;
+    }
+    handleOverlayRegister();
+  });
+
+  // Guest button
+  $("#overlay-btn-guest")?.addEventListener("click", () => {
+    hideLoginOverlay();
+  });
+
+  // Enter key on password field triggers login
+  $("#login-password")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      if (registerMode) handleOverlayRegister();
+      else handleOverlayLogin();
+    }
+  });
+
+  // Enter key on email field moves to password
+  $("#login-email")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      $("#login-password")?.focus();
+    }
+  });
+}
+
+function showLoginOverlay() {
+  const overlay = $("#login-overlay");
+  if (overlay) overlay.classList.remove("hidden");
+}
+
+function hideLoginOverlay() {
+  const overlay = $("#login-overlay");
+  if (overlay) overlay.classList.add("hidden");
+}
+
+function showLoginError(msg) {
+  const el = $("#login-error");
+  if (el) el.textContent = msg;
+}
+
+async function handleOverlayLogin() {
+  const email = $("#login-email")?.value?.trim();
+  const password = $("#login-password")?.value;
+  if (!email || !password) {
+    showLoginError("이메일과 비밀번호를 입력하세요");
+    return;
+  }
+  showLoginError("");
+  const btn = $("#overlay-btn-login");
+  if (btn) { btn.disabled = true; btn.textContent = "로그인 중..."; }
+
+  try {
+    const result = await api.login(email, password);
+    await api.setAuthToken(result.token);
+    // Store refresh token if provided (Supabase)
+    if (result.refresh_token) {
+      localStorage.setItem("refresh_token", result.refresh_token);
+    }
+    api.setUserInfo(result);
+    hideLoginOverlay();
+    updateAuthUI();
+  } catch (e) {
+    showLoginError(`로그인 실패: ${e}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "로그인"; }
+  }
+}
+
+async function handleOverlayRegister() {
+  const email = $("#login-email")?.value?.trim();
+  const password = $("#login-password")?.value;
+  const displayName = $("#login-display-name")?.value?.trim();
+  if (!email || !password) {
+    showLoginError("이메일과 비밀번호를 입력하세요");
+    return;
+  }
+  if (password.length < 6) {
+    showLoginError("비밀번호는 6자 이상이어야 합니다");
+    return;
+  }
+  showLoginError("");
+  const btn = $("#overlay-btn-register");
+  if (btn) { btn.disabled = true; btn.textContent = "가입 중..."; }
+
+  try {
+    const result = await api.register(email, password, displayName);
+    await api.setAuthToken(result.token);
+    if (result.refresh_token) {
+      localStorage.setItem("refresh_token", result.refresh_token);
+    }
+    api.setUserInfo(result);
+
+    // If email confirmation required (Supabase), token may be empty
+    if (!result.token && result.email_confirmed === false) {
+      showLoginError("가입 완료! 이메일 인증 후 로그인하세요.");
+      if (btn) { btn.disabled = false; btn.textContent = "가입하기"; }
+      return;
+    }
+
+    hideLoginOverlay();
+    updateAuthUI();
+  } catch (e) {
+    showLoginError(`회원가입 실패: ${e}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "가입하기"; }
+  }
+}
+
+
 // ─── Auth Management ────────────────────────────────────
 function updateAuthUI() {
   const userInfo = api.getUserInfo();
@@ -648,7 +783,9 @@ async function handleRegister() {
 
 function handleLogout() {
   api.clearAuth();
+  localStorage.removeItem("refresh_token");
   updateAuthUI();
+  showLoginOverlay();
   showSettingsStatus("로그아웃 완료", "info");
 }
 

@@ -172,6 +172,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 class PurchaseCreditsRequest(BaseModel):
     amount_usd: float
 
@@ -995,6 +999,32 @@ async def get_me(user: dict = Depends(get_current_user)):
     if not info:
         raise HTTPException(404, "User not found")
     return info
+
+
+@app.post("/api/auth/refresh")
+async def refresh_token(req: RefreshTokenRequest):
+    """Refresh an expired Supabase session."""
+    auth = _get_auth_service()
+    result = auth.refresh_session(req.refresh_token)
+    if not result:
+        raise HTTPException(401, "Failed to refresh session")
+    return result
+
+
+@app.post("/api/auth/logout")
+async def logout(authorization: str = Header(default="")):
+    """Log out and invalidate the session."""
+    auth = _get_auth_service()
+    token = authorization[7:] if authorization.startswith("Bearer ") else ""
+    auth.logout(token)
+    return {"ok": True}
+
+
+@app.get("/api/auth/provider")
+async def auth_provider():
+    """Return the active auth provider (supabase or local)."""
+    auth = _get_auth_service()
+    return {"provider": "supabase" if auth.using_supabase else "local"}
 
 
 # ---------------------------------------------------------------------------
