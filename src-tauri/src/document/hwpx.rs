@@ -379,17 +379,9 @@ fn hwpx_align_style(alignment: Option<&str>) -> String {
 }
 
 fn extract_between(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
-    let start = text.find(start_tag)? + start_tag.len();
-    let end = text[start..].find(end_tag)? + start;
-    let val = text[start..end].trim();
-    if val.is_empty() {
-        None
-    } else {
-        Some(val.to_string())
-    }
+    super::converter::extract_between(text, start_tag, end_tag)
 }
 
 fn local_name(name: &[u8]) -> &str {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    s.rsplit(':').next().unwrap_or(s)
+    super::converter::local_name(name)
 }

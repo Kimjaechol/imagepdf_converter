@@ -534,6 +534,5 @@ fn parse_relationships(xml: &str) -> HashMap<String, String> {
 }
 
 fn local_name(name: &[u8]) -> &str {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    s.rsplit(':').next().unwrap_or(s)
+    super::converter::local_name(name)
 }

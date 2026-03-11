@@ -1,9 +1,5 @@
-use crate::backend::process;
+use super::common::backend_url;
 use serde::{Deserialize, Serialize};
-
-fn backend_url() -> String {
-    format!("http://127.0.0.1:{}", process::get_port())
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct ConfigUpdate {

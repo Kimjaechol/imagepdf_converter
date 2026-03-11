@@ -309,3 +309,23 @@ pub fn html_to_markdown(html: &str) -> String {
     let re = RE.get_or_init(|| regex::Regex::new(r"\n{3,}").unwrap());
     re.replace_all(&md, "\n\n").trim().to_string()
 }
+
+/// Extract local name from a namespaced XML tag (e.g., "w:body" → "body")
+/// Shared by docx, pptx, hwpx converters.
+pub fn local_name(name: &[u8]) -> &str {
+    let s = std::str::from_utf8(name).unwrap_or("");
+    s.rsplit(':').next().unwrap_or(s)
+}
+
+/// Extract text between two tags in an XML string.
+/// Shared by pptx, hwpx converters.
+pub fn extract_between(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
+    let start = text.find(start_tag)? + start_tag.len();
+    let end = text[start..].find(end_tag)? + start;
+    let val = text[start..end].trim();
+    if val.is_empty() {
+        None
+    } else {
+        Some(val.to_string())
+    }
+}

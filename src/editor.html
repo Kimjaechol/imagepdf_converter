@@ -32,6 +32,7 @@
   <div class="toolbar-group toolbar-actions">
     <button class="tool-btn action-btn" id="btn-open">열기</button>
     <button class="tool-btn action-btn" id="btn-save">저장</button>
+    <button class="tool-btn action-btn" id="btn-save-md" title="Markdown으로 저장">MD 저장</button>
     <select id="view-mode" class="view-select">
       <option value="split">분할 보기</option>
       <option value="edit">편집만</option>
@@ -137,22 +138,62 @@
     if (path) loadFile(path);
   });
 
+  // Auto-save corresponding markdown file when HTML is saved
+  async function autoSaveMarkdown(htmlContent, htmlPath) {
+    try {
+      const md = await api.htmlToMarkdown(htmlContent);
+      // Replace .html/.htm extension with .md
+      const mdPath = htmlPath.replace(/\.html?$/i, '.md');
+      await api.writeFile(mdPath, md);
+      console.log('Markdown auto-saved:', mdPath);
+    } catch (e) {
+      console.warn('Markdown auto-save failed:', e);
+    }
+  }
+
   document.getElementById('btn-save').addEventListener('click', async () => {
     try {
       if (currentFilePath) {
         await api.writeFile(currentFilePath, editor.value);
+        // Auto-save markdown alongside HTML
+        await autoSaveMarkdown(editor.value, currentFilePath);
         document.title = `${currentFilePath.split(/[\\/]/).pop()} - 저장됨`;
       } else {
         const path = await api.saveFileDialog('output.html');
         if (path) {
           await api.writeFile(path, editor.value);
           currentFilePath = path;
+          // Auto-save markdown alongside HTML
+          await autoSaveMarkdown(editor.value, path);
           document.title = `${path.split(/[\\/]/).pop()} - HTML 에디터`;
         }
       }
     } catch (e) {
       console.error('Save failed:', e);
       alert(`저장 실패: ${e}`);
+    }
+  });
+
+  // Save as Markdown button
+  document.getElementById('btn-save-md').addEventListener('click', async () => {
+    try {
+      const md = await api.htmlToMarkdown(editor.value);
+      if (currentFilePath) {
+        const mdPath = currentFilePath.replace(/\.html?$/i, '.md');
+        await api.writeFile(mdPath, md);
+        alert(`Markdown 저장 완료: ${mdPath.split(/[\\/]/).pop()}`);
+      } else {
+        const path = await api.saveFileDialog('output.md', [
+          { name: 'Markdown', extensions: ['md'] },
+        ]);
+        if (path) {
+          await api.writeFile(path, md);
+          alert(`Markdown 저장 완료: ${path.split(/[\\/]/).pop()}`);
+        }
+      }
+    } catch (e) {
+      console.error('Markdown save failed:', e);
+      alert(`Markdown 저장 실패: ${e}`);
     }
   });
 

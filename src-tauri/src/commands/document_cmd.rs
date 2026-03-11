@@ -53,6 +53,12 @@ pub async fn convert_any_document(
     do_convert(&input_path, output_dir, &fmts).await
 }
 
+/// Convert HTML string to Markdown (used by the editor for markdown export/auto-save)
+#[tauri::command]
+pub fn html_to_markdown(html: String) -> Result<String, String> {
+    Ok(crate::document::converter::html_to_markdown(&html))
+}
+
 async fn do_convert(
     input_path: &str,
     output_dir: Option<String>,

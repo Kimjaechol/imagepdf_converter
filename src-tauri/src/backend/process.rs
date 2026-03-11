@@ -116,6 +116,7 @@ pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
     // Hide the console window on Windows
     #[cfg(windows)]
     {
+        #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
