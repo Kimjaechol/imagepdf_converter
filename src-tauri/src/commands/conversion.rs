@@ -1,5 +1,6 @@
 use crate::backend::process;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ConvertRequest {
@@ -48,7 +49,7 @@ fn backend_url() -> String {
 
 fn auth_header(app: &tauri::AppHandle) -> String {
     let state = app.state::<crate::AuthToken>();
-    let token = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let token = state.0.lock().unwrap_or_else(|e: std::sync::PoisonError<std::sync::MutexGuard<'_, String>>| e.into_inner());
     format!("Bearer {}", token)
 }
 
