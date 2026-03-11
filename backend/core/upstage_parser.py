@@ -335,13 +335,22 @@ class UpstageDocumentParser:
             category = elem.get("category", "paragraph")
             block_type = category_map.get(category, BlockType.PARAGRAPH)
 
-            # Extract text
+            # Extract text – prefer HTML-derived text to preserve structure
             content = elem.get("content", {})
             text = ""
             html_content = ""
             if isinstance(content, dict):
-                text = content.get("text", "") or content.get("markdown", "")
                 html_content = content.get("html", "")
+                raw_text = content.get("text", "")
+                markdown_text = content.get("markdown", "")
+
+                # For non-table blocks, extract structured text from HTML
+                # to preserve line breaks, list items, etc. that the plain
+                # "text" field may flatten into a single line.
+                if html_content and block_type != BlockType.TABLE:
+                    text = self._html_to_structured_text(html_content, block_type)
+                if not text:
+                    text = raw_text or markdown_text
             elif isinstance(content, str):
                 text = content
 
@@ -394,6 +403,72 @@ class UpstageDocumentParser:
             blocks.append(block)
 
         return blocks
+
+    def _html_to_structured_text(
+        self,
+        html_content: str,
+        block_type: BlockType,
+    ) -> str:
+        """Extract text from Upstage HTML preserving structure.
+
+        Upstage returns HTML like:
+          <p>Line one<br>Line two</p>
+          <ul><li>Item 1</li><li>Item 2</li></ul>
+          <h1>Title text</h1>
+
+        The plain "text" field often flattens these into a single line.
+        This method preserves line breaks and list item separators so
+        the HTML renderer can later reconstruct proper formatting.
+        """
+        from html.parser import HTMLParser
+
+        parts: list[str] = []
+        # Tags that should insert a newline when closed
+        _BLOCK_TAGS = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+        class StructuredTextParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self._in_li = False
+                self._li_parts: list[str] = []
+
+            def handle_starttag(self, tag, attrs):
+                tag = tag.lower()
+                if tag == "br":
+                    parts.append("\n")
+                elif tag == "li":
+                    self._in_li = True
+                    self._li_parts = []
+
+            def handle_endtag(self, tag):
+                tag = tag.lower()
+                if tag == "li" and self._in_li:
+                    li_text = "".join(self._li_parts).strip()
+                    if li_text:
+                        parts.append(li_text)
+                        parts.append("\n")
+                    self._in_li = False
+                elif tag in ("p", "div", "h1", "h2", "h3", "h4", "h5", "h6"):
+                    parts.append("\n")
+                elif tag == "tr":
+                    parts.append("\n")
+
+            def handle_data(self, data):
+                if self._in_li:
+                    self._li_parts.append(data)
+                else:
+                    parts.append(data)
+
+        try:
+            parser = StructuredTextParser()
+            parser.feed(html_content)
+            result = "".join(parts).strip()
+            # Collapse triple+ newlines into double
+            while "\n\n\n" in result:
+                result = result.replace("\n\n\n", "\n\n")
+            return result
+        except Exception:
+            return ""
 
     def _extract_bbox(
         self,
