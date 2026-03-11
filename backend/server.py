@@ -108,41 +108,25 @@ def _get_config() -> PipelineConfig:
         else:
             _config = PipelineConfig()
 
-        # Auto-select best pipeline mode based on available API keys.
-        # If Upstage key is configured, prefer upstage_hybrid for highest accuracy.
-        # If only Gemini key is available, use unified_vision.
-        # If neither, fall back to standard (local).
         upstage_key = os.environ.get("UPSTAGE_API_KEY", "")
         gemini_key = os.environ.get("GEMINI_API_KEY", "")
 
-        if _config.pipeline_mode == "upstage_hybrid" and not upstage_key and not gemini_key:
-            logger.info(
-                "upstage_hybrid mode configured but no API keys available. "
-                "Falling back to standard mode."
-            )
-            _config.pipeline_mode = "standard"
-        elif _config.pipeline_mode == "upstage_hybrid" and not upstage_key and gemini_key:
-            logger.info(
-                "upstage_hybrid mode configured but UPSTAGE_API_KEY not set. "
-                "Digital PDFs will use PyMuPDF + Gemini. "
-                "For scanned PDFs, will fall back to unified_vision."
-            )
-            # Keep upstage_hybrid — the pipeline already handles missing
-            # UPSTAGE_API_KEY by auto-falling back to unified_vision for
-            # scanned PDFs while still using PyMuPDF for digital PDFs.
-        elif _config.pipeline_mode == "unified_vision" and not gemini_key:
-            logger.info(
-                "unified_vision mode configured but GEMINI_API_KEY not set. "
-                "Falling back to standard mode."
-            )
-            _config.pipeline_mode = "standard"
-
         logger.info(
-            "Pipeline config: mode=%s, upstage_key=%s, gemini_key=%s",
-            _config.pipeline_mode,
-            "configured" if upstage_key else "not set",
-            "configured" if gemini_key else "not set",
+            "Pipeline config: upstage_key=%s, gemini_key=%s | "
+            "Digital PDF → PyMuPDF + Gemini | Scanned PDF → Upstage + Gemini",
+            "configured" if upstage_key else "NOT SET",
+            "configured" if gemini_key else "NOT SET",
         )
+        if not upstage_key:
+            logger.warning(
+                "UPSTAGE_API_KEY not set – scanned/image PDFs will fail. "
+                "Digital PDFs will still work with PyMuPDF."
+            )
+        if not gemini_key:
+            logger.warning(
+                "GEMINI_API_KEY not set – visual correction will be skipped. "
+                "Output may contain uncorrected OCR/extraction errors."
+            )
     return _config
 
 
@@ -184,7 +168,7 @@ class SetApiKeyRequest(BaseModel):
 
 
 class SetPipelineModeRequest(BaseModel):
-    mode: str  # "standard" | "unified_vision" | "upstage_hybrid"
+    mode: str  # kept for backward compat
 
 
 class TranslateHtmlRequest(BaseModel):
@@ -307,20 +291,19 @@ async def get_supported_languages():
 @app.get("/api/config")
 async def get_config():
     cfg = _get_config()
+    upstage_key = os.environ.get("UPSTAGE_API_KEY", "")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
     return {
-        "pages_per_chunk": cfg.pages_per_chunk,
-        "max_workers": cfg.max_workers,
+        "pipeline": "auto (digital → PyMuPDF+Gemini, scanned → Upstage+Gemini)",
         "dpi": cfg.dpi,
         "output_formats": cfg.output_formats,
-        "pipeline_mode": cfg.pipeline_mode,
-        "layout_engine": cfg.layout_engine,
-        "ocr_engine": cfg.ocr_engine,
-        "reading_order_mode": cfg.reading_order_mode,
-        "heading_mode": cfg.heading_mode,
         "correction_mode": cfg.correction_mode,
-        "correction_aggressiveness": cfg.correction_aggressiveness,
         "upstage_mode": cfg.upstage_mode,
         "gemini_visual_batch_size": cfg.gemini_visual_batch_size,
+        "api_keys": {
+            "upstage": "configured" if upstage_key else "not set",
+            "gemini": "configured" if gemini_key else "not set",
+        },
     }
 
 
@@ -488,56 +471,26 @@ async def get_upstage_api_key_status():
 
 @app.post("/api/settings/pipeline-mode")
 async def set_pipeline_mode(req: SetPipelineModeRequest):
-    """Set the conversion pipeline mode.
-
-    Available modes:
-    - "standard": Multi-step local pipeline (layout→OCR→table→heading→correction)
-    - "unified_vision": Single Gemini call with TAG=0/1 optimization (default)
-    - "upstage_hybrid": Upstage Document Parse + Gemini visual comparison (highest accuracy)
-    """
-    valid_modes = {"standard", "unified_vision", "upstage_hybrid"}
-    if req.mode not in valid_modes:
-        raise HTTPException(400, f"Invalid mode. Must be one of: {valid_modes}")
-
-    cfg = _get_config()
-    cfg.pipeline_mode = req.mode
-    logger.info("Pipeline mode set to: %s", req.mode)
-    return {"status": "ok", "mode": req.mode}
+    """Kept for backward compatibility. Pipeline auto-detects PDF type."""
+    return {"status": "ok", "mode": "auto"}
 
 
 @app.get("/api/settings/pipeline-mode")
 async def get_pipeline_mode():
-    """Get the current pipeline mode and available modes."""
-    cfg = _get_config()
+    """Pipeline info: auto-detects digital vs scanned PDF."""
     upstage_key = os.environ.get("UPSTAGE_API_KEY", "")
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     return {
-        "current_mode": cfg.pipeline_mode,
-        "available_modes": [
-            {
-                "id": "standard",
-                "name": "Standard (Local)",
-                "description": "Multi-step local pipeline. No API key needed.",
-                "available": True,
-            },
-            {
-                "id": "unified_vision",
-                "name": "Gemini Vision",
-                "description": "Single Gemini call with smart batching. Requires Gemini API key.",
-                "available": bool(gemini_key),
-            },
-            {
-                "id": "upstage_hybrid",
-                "name": "Upstage + Gemini Hybrid (Highest Accuracy)",
-                "description": (
-                    "Upstage Document Parse for OCR/layout + Gemini for visual comparison. "
-                    "Requires both Upstage and Gemini API keys for scanned PDFs. "
-                    "Digital PDFs need only Gemini API key."
-                ),
-                "available": bool(gemini_key),
-                "upstage_configured": bool(upstage_key),
-            },
-        ],
+        "current_mode": "auto",
+        "description": (
+            "Auto-detects PDF type. "
+            "Digital PDF → PyMuPDF + Gemini correction. "
+            "Scanned PDF → Upstage OCR + Gemini correction."
+        ),
+        "api_keys": {
+            "upstage": "configured" if upstage_key else "not set",
+            "gemini": "configured" if gemini_key else "not set",
+        },
     }
 
 

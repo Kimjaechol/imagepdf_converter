@@ -1,14 +1,20 @@
 # Pipeline Configuration
+#
+# Two workflows (auto-detected by PDF type):
+#   Digital PDF  → PyMuPDF text/style extraction + Gemini visual correction
+#   Scanned PDF  → Upstage Document Parse (OCR) + Gemini visual correction
+#
+# Required API keys (set as environment variables):
+#   UPSTAGE_API_KEY  – for scanned/image PDFs
+#   GEMINI_API_KEY   – for visual correction (both workflows)
+
 pipeline:
-  mode: upstage_hybrid  # upstage_hybrid (Upstage OCR + Gemini) | unified_vision (Gemini only) | standard (local multi-step)
-  pages_per_chunk: 10
-  max_workers: 8
   dpi: 300
   output_formats:
     - html
     - markdown
 
-# Upstage Document Parse Settings
+# Upstage Document Parse (scanned PDF OCR)
 upstage:
   mode: auto            # auto | standard | enhanced
   max_workers: 4
@@ -16,53 +22,18 @@ upstage:
   visual_batch_size: 3
   max_structure_change: 0.3
 
-# Layout Analysis
-layout:
-  engine: surya  # surya | layoutparser | hybrid
-  confidence_threshold: 0.5
-  detect_tables: true
-  detect_figures: true
-  detect_equations: true
-  detect_columns: true
-
-# OCR Configuration
-ocr:
-  engine: surya  # surya | tesseract | hybrid
-  languages:
-    - ko
-    - en
-    - zh
-  tesseract_config: "--oem 3 --psm 6"
-
-# Table Structure Recognition
-table:
-  engine: table_transformer  # table_transformer | surya
-  merge_multipage: true
-  header_similarity_threshold: 0.85
-
-# Reading Order
+# Gemini visual correction model
 reading_order:
-  mode: hybrid  # rule_based | vlm | hybrid
-  vlm_provider: gemini  # gemini | ollama
   gemini_model: gemini-2.0-flash-lite
   ollama_model: qwen2.5:7b
 
-# Heading Classification
-heading:
-  mode: hybrid  # rule_based | llm | hybrid
-  llm_provider: gemini  # ollama | gemini
-  gemini_model: gemini-2.0-flash-lite
-  ollama_model: qwen2.5:0.5b-instruct
-
-# Language Correction
+# Language Correction (post-processing safety net)
 correction:
   enable: true
-  mode: hybrid  # dictionary | llm | hybrid
-  llm_provider: gemini  # gemini | ollama
-  gemini_model: gemini-2.0-flash-lite
-  ollama_model: qwen2.5:1.5b
+  mode: hybrid          # dictionary | llm | hybrid
+  llm_provider: gemini
   dictionary_path: config/correction_dict.json
-  aggressiveness: conservative  # conservative | moderate | aggressive
+  aggressiveness: conservative
 
 # Output Settings
 output:
@@ -71,8 +42,8 @@ output:
     inline_css: true
     preserve_font_size_ratio: true
   markdown:
-    table_format: pipe  # pipe | html_fallback
-    footnote_style: reference  # inline | reference
+    table_format: pipe
+    footnote_style: reference
     image_dir: images
 
 # Model Endpoints
@@ -82,13 +53,6 @@ models:
 
 # Credit System
 credits:
-  cost_markup: 2.2  # charge users 2.2x the actual API cost
-  gemini_input_cost_per_million: 0.075  # USD per 1M input tokens (Gemini 2.0 Flash-Lite official API pricing)
-  gemini_output_cost_per_million: 0.30  # USD per 1M output tokens (Gemini 2.0 Flash-Lite official API pricing)
-
-# Performance
-performance:
-  gpu_enabled: false
-  batch_size: 4
-  cache_models: true
-  low_memory_mode: false
+  cost_markup: 2.2
+  gemini_input_cost_per_million: 0.075
+  gemini_output_cost_per_million: 0.30
