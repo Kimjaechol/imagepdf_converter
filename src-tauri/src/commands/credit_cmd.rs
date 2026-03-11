@@ -1,4 +1,5 @@
 use super::common::{auth_header, backend_url, check_response};
+use tauri::Manager;
 
 // ─── Auth ──────────────────────────────────────────────
 
