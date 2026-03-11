@@ -147,10 +147,6 @@ class SetApiKeyRequest(BaseModel):
     api_key: str
 
 
-class SetUpstageApiKeyRequest(BaseModel):
-    api_key: str
-
-
 class SetPipelineModeRequest(BaseModel):
     mode: str  # "standard" | "unified_vision" | "upstage_hybrid"
 
@@ -165,6 +161,10 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     display_name: str = ""
+    phone: str = ""
+    nationality: str = ""
+    gender: str = ""       # "male" | "female" | "other" | ""
+    birth_date: str = ""   # "YYYY-MM-DD" format
 
 
 class LoginRequest(BaseModel):
@@ -333,7 +333,7 @@ async def convert_batch(req: BatchConvertRequest, user: dict = Depends(get_curre
     }
 
     asyncio.get_event_loop().run_in_executor(
-        None, _run_batch_conversion, job_id, req
+        None, _run_batch_conversion, job_id, req, user["user_id"]
     )
 
     return JobStatus(
@@ -426,45 +426,19 @@ async def get_api_key_status():
 
 
 # ---------------------------------------------------------------------------
-# Upstage API Key Management
+# Upstage API Key – operator only (Railway environment variable)
 # ---------------------------------------------------------------------------
-
-def _upstage_api_key_file() -> Path:
-    """Return the path to the persisted Upstage API key file."""
-    p = Path("data")
-    p.mkdir(parents=True, exist_ok=True)
-    return p / "upstage_api_key.txt"
-
-
-def _load_persisted_upstage_api_key() -> None:
-    """Load the Upstage API key from disk into os.environ on startup."""
-    f = _upstage_api_key_file()
-    if f.exists():
-        key = f.read_text(encoding="utf-8").strip()
-        if key:
-            os.environ["UPSTAGE_API_KEY"] = key
-            logger.info("Loaded persisted Upstage API key (%s...)", key[:4])
-
-
-_load_persisted_upstage_api_key()
-
-
-@app.post("/api/settings/upstage-api-key")
-async def set_upstage_api_key(req: SetUpstageApiKeyRequest):
-    """Set the Upstage API key. Persisted to disk."""
-    os.environ["UPSTAGE_API_KEY"] = req.api_key
-    _upstage_api_key_file().write_text(req.api_key, encoding="utf-8")
-    logger.info("Upstage API key saved and persisted")
-    return {"status": "ok", "message": "Upstage API key configured"}
+# The Upstage API key is read ONLY from the UPSTAGE_API_KEY environment
+# variable, which must be configured by the operator in Railway's Variables
+# tab. There is no user-facing endpoint to set or view the key.
 
 
 @app.get("/api/settings/upstage-api-key/status")
 async def get_upstage_api_key_status():
-    """Check if an Upstage API key is configured."""
+    """Check if the Upstage API key is configured (no key value exposed)."""
     key = os.environ.get("UPSTAGE_API_KEY", "")
     return {
         "configured": bool(key),
-        "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
     }
 
 
@@ -991,7 +965,11 @@ async def register(req: RegisterRequest):
     """Register a new user account."""
     auth = _get_auth_service()
     try:
-        result = auth.register(req.email, req.password, req.display_name)
+        result = auth.register(
+            req.email, req.password, req.display_name,
+            phone=req.phone, nationality=req.nationality,
+            gender=req.gender, birth_date=req.birth_date,
+        )
         # Auto-create credit account
         _get_credit_service().get_or_create_account(result["user_id"])
         return result
@@ -1424,9 +1402,14 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
         # Credit check and deduction for PDF files
         if doc_type != "other" and req.user_id:
             svc = _get_credit_service()
+            cost = svc.estimate_cost(num_pages, doc_type)
             if not svc.check_sufficient_balance(req.user_id, num_pages, doc_type):
+                balance = svc.get_balance(req.user_id)
                 _jobs[job_id]["status"] = "error"
-                _jobs[job_id]["message"] = "Insufficient credits"
+                _jobs[job_id]["message"] = (
+                    f"크레딧이 부족합니다. 필요: ${cost['charged_usd']:.4f}, "
+                    f"잔액: ${balance:.4f}. 먼저 크레딧을 충전해주세요."
+                )
                 return
             # Debit upfront
             svc.debit_usage(
@@ -1477,12 +1460,44 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
         _jobs[job_id]["message"] = str(exc)
 
 
-def _run_batch_conversion(job_id: str, req: BatchConvertRequest) -> None:
+def _run_batch_conversion(job_id: str, req: BatchConvertRequest, user_id: str = "") -> None:
     """Run batch conversion in background thread."""
     try:
         _jobs[job_id]["status"] = "processing"
         cfg = _get_config()
         cfg.output_formats = req.output_formats
+
+        # Credit check for all PDF files in the folder
+        if user_id:
+            folder = Path(req.folder_path)
+            pdf_files = list(folder.glob("*.pdf")) + list(folder.glob("*.PDF"))
+            if req.recursive:
+                pdf_files = list(folder.rglob("*.pdf")) + list(folder.rglob("*.PDF"))
+
+            total_pages = 0
+            for pdf_path in pdf_files:
+                try:
+                    import fitz
+                    with fitz.open(str(pdf_path)) as doc:
+                        total_pages += len(doc)
+                except Exception:
+                    total_pages += 1
+
+            if total_pages > 0:
+                svc = _get_credit_service()
+                # Use image_pdf pricing as worst-case estimate for batch
+                if not svc.check_sufficient_balance(user_id, total_pages, "image_pdf"):
+                    _jobs[job_id]["status"] = "error"
+                    _jobs[job_id]["message"] = (
+                        f"Insufficient credits. Estimated {total_pages} pages "
+                        f"require ${total_pages * 0.02:.2f} credits."
+                    )
+                    return
+                # Debit upfront
+                svc.debit_usage(
+                    user_id, total_pages, "image_pdf",
+                    description=f"Batch: {len(pdf_files)} files ({total_pages}p)",
+                )
 
         def progress_cb(msg: str, pct: float):
             _jobs[job_id]["progress"] = pct
