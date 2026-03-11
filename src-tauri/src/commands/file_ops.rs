@@ -1,4 +1,5 @@
 use crate::backend::process;
+use tauri::Manager;
 
 #[tauri::command]
 pub fn get_backend_url() -> String {

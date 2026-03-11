@@ -1,4 +1,5 @@
 use crate::backend::process;
+use tauri::Manager;
 
 fn backend_url() -> String {
     format!("http://127.0.0.1:{}", process::get_port())
@@ -7,7 +8,7 @@ fn backend_url() -> String {
 /// Read the auth token stored by the frontend (passed from localStorage via Tauri state).
 fn auth_header(app: &tauri::AppHandle) -> String {
     let state = app.state::<crate::AuthToken>();
-    let token = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let token = state.0.lock().unwrap_or_else(|e: std::sync::PoisonError<std::sync::MutexGuard<'_, String>>| e.into_inner());
     format!("Bearer {}", token)
 }
 
@@ -88,7 +89,7 @@ pub async fn auth_get_me(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 #[tauri::command]
 pub async fn set_auth_token(app: tauri::AppHandle, token: String) -> Result<(), String> {
     let state = app.state::<crate::AuthToken>();
-    let mut t = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut t = state.0.lock().unwrap_or_else(|e: std::sync::PoisonError<std::sync::MutexGuard<'_, String>>| e.into_inner());
     *t = token;
     Ok(())
 }
