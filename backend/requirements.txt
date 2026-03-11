@@ -28,3 +28,6 @@ aiofiles>=23.0.0
 
 # Payments
 stripe>=7.0.0
+
+# Supabase Auth & Database
+supabase>=2.0.0

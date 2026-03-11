@@ -8,6 +8,42 @@
 </head>
 <body>
 
+<!-- ─── Login Overlay (첫 화면) ─────────────────────── -->
+<div id="login-overlay" class="login-overlay">
+  <div class="login-card">
+    <div class="login-logo">&#x1F4C4;</div>
+    <h2 class="login-title">MoA 문서 변환기</h2>
+    <p class="login-subtitle">PDF, Word, 한글, Excel, PowerPoint 문서를<br>HTML과 Markdown으로 변환합니다.</p>
+
+    <div id="login-form">
+      <div class="login-field">
+        <label for="login-email">이메일</label>
+        <input type="email" id="login-email" placeholder="email@example.com" autocomplete="email">
+      </div>
+      <div class="login-field">
+        <label for="login-password">비밀번호</label>
+        <input type="password" id="login-password" placeholder="6자 이상" autocomplete="current-password">
+      </div>
+      <div id="login-name-field" class="login-field" style="display:none">
+        <label for="login-display-name">닉네임 (선택)</label>
+        <input type="text" id="login-display-name" placeholder="닉네임">
+      </div>
+
+      <div id="login-error" class="login-error"></div>
+
+      <button id="overlay-btn-login" class="btn btn-primary btn-full login-btn">로그인</button>
+      <button id="overlay-btn-register" class="btn btn-outline btn-full login-btn">회원가입</button>
+
+      <div class="login-divider"><span>또는</span></div>
+      <button id="overlay-btn-guest" class="btn btn-outline btn-full login-btn login-guest-btn">게스트로 체험하기</button>
+    </div>
+
+    <div class="login-footer">
+      <span>MoA Document Converter v1.0</span>
+    </div>
+  </div>
+</div>
+
 <!-- ─── Header ─────────────────────────────────────── -->
 <header class="app-header">
   <div class="header-left">
