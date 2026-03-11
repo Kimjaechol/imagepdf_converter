@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from backend.core.ocr_confusion import build_ocr_confusion_instruction_compact
 from backend.models.schema import (
     Alignment,
     BlockType,
@@ -314,6 +315,7 @@ Fix ONLY what is wrong. Do NOT rewrite or restructure the document.
 5. **Missing content**: If visible text in the image is missing from extraction, add it
 6. **Reading order**: If blocks appear in wrong order compared to visual layout, fix order
 7. **Korean heading patterns**: "제1장"/"제1편" = h2, "제1절"/"제1관" = h3, "제1조" = h4
+{build_ocr_confusion_instruction_compact()}
 8. **CRITICAL - Number/digit position errors (MuPDF glyph width bug)**:
    The underlying PDF C library (MuPDF) has a bug in glyph width calculation when
    CJK fonts (Korean, Chinese, Japanese) are mixed with Arabic numerals (0-9).

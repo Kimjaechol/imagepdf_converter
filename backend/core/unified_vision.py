@@ -22,6 +22,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from backend.core.ocr_confusion import build_ocr_confusion_instruction_compact
 from backend.models.schema import (
     Alignment,
     BBox,
@@ -539,7 +540,8 @@ Analyze bbox x-coordinates to detect multi-column layout:
 2. **Classify blocks**: heading, subtitle, paragraph, list, caption, footnote, header, footer, page_number.
 3. **Determine reading order**: Following the zone + column rules above.
 4. **Relation extraction**: Link captions to tables/figures, set footnote markers.
-5. **Preserve bbox and styles**: Keep original bbox. Set font_size_relative from sz metadata.{translate_instruction}
+5. **Preserve bbox and styles**: Keep original bbox. Set font_size_relative from sz metadata.
+{build_ocr_confusion_instruction_compact()}{translate_instruction}
 
 {pages_section}
 
@@ -671,6 +673,8 @@ Return JSON:
     }}
   ]
 }}
+
+{build_ocr_confusion_instruction_compact()}
 
 CRITICAL RULES:
 - Korean heading patterns: "제1장"/"제1편" = h2, "제1절"/"제1관" = h3, "제1조" = h4. No level skipping.

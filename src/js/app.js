@@ -333,6 +333,19 @@ async function handleConvert() {
 async function convertSingle() {
   const ext = api.getFileExtension(state.selectedFile);
 
+  // Check credits for PDF conversion (costs money)
+  if (api.isPdfFormat(ext) && api.getAuthToken()) {
+    try {
+      const creditInfo = await api.getCredits();
+      if (creditInfo.balance_usd <= 0) {
+        showCreditExhaustedPopup();
+        return;
+      }
+    } catch {
+      // Backend may not support credits yet, continue
+    }
+  }
+
   // Unified conversion - routes via convert_document command which
   // handles backend availability check and Rust-native fallback for PDF
   const label = state.translate ? `${ext.toUpperCase()} 변환 + 번역 중...` : `${ext.toUpperCase()} 변환 중...`;
@@ -863,4 +876,70 @@ async function handleEstimateCost() {
   } catch (e) {
     showSettingsStatus(`추산 실패: ${e}`, "error");
   }
+}
+
+// ─── Credit Exhausted Popup ─────────────────────────────
+function showCreditExhaustedPopup() {
+  // Remove existing popup if any
+  const existing = document.getElementById("credit-popup-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "credit-popup-overlay";
+  overlay.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6); z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+  `;
+
+  overlay.innerHTML = `
+    <div style="
+      background: white; border-radius: 12px; padding: 32px; max-width: 420px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3); text-align: center;
+    ">
+      <div style="font-size: 48px; margin-bottom: 16px;">&#x1F4B3;</div>
+      <h3 style="margin: 0 0 12px 0; color: #333; font-size: 18px;">
+        무료 크레딧이 모두 소진되었습니다
+      </h3>
+      <p style="color: #666; margin: 0 0 20px 0; line-height: 1.6;">
+        PDF 문서 변환을 계속하려면 크레딧을 충전해 주세요.<br>
+        <span style="font-size: 13px; color: #999;">
+          이미지 PDF: $0.02/페이지 &middot; 디지털 PDF: $0.005/페이지<br>
+          기타 문서 (DOCX, HWPX 등): 무료
+        </span>
+      </p>
+      <div style="display: flex; gap: 8px; justify-content: center;">
+        <button id="credit-popup-purchase" style="
+          background: #4caf50; color: white; border: none; padding: 10px 24px;
+          border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;
+        ">크레딧 충전하기</button>
+        <button id="credit-popup-close" style="
+          background: #eee; color: #666; border: none; padding: 10px 24px;
+          border-radius: 6px; cursor: pointer; font-size: 14px;
+        ">닫기</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  document.getElementById("credit-popup-purchase").addEventListener("click", () => {
+    overlay.remove();
+    // Switch to settings tab and scroll to credit section
+    switchTab("settings");
+    const creditSection = $("#credit-section");
+    if (creditSection) {
+      creditSection.style.display = "block";
+      creditSection.scrollIntoView({ behavior: "smooth" });
+    }
+  });
+
+  document.getElementById("credit-popup-close").addEventListener("click", () => {
+    overlay.remove();
+  });
+
+  // Close on overlay click
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
 }

@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 
+from backend.core.ocr_confusion import build_ocr_confusion_instruction
 from backend.models.schema import LayoutBlock
 
 logger = logging.getLogger(__name__)
@@ -85,14 +86,27 @@ class CorrectionEngine:
     # Stage 0: Hanja Cheongan (天干) context-based correction
     # ------------------------------------------------------------------
 
-    # Characters that OCR frequently confuses with Cheongan Hanja
+    # Characters that OCR frequently confuses with Cheongan/Jiji Hanja
     _CHEONGAN_CONFUSION: list[tuple[str, str]] = [
+        # 천간 (天干) confusion
         ("乙", "Z"),   ("乙", "z"),   ("乙", "2"),   ("乙", "己"),
         ("丁", "T"),   ("丁", "7"),
         ("甲", "田"),  ("甲", "由"),
-        ("丙", "内"),
+        ("丙", "内"),  ("丙", "两"),
+        ("壬", "王"),  ("壬", "士"),
+        ("辛", "幸"),
+        ("己", "已"),  ("己", "巳"),
+        # 지지 (地支) confusion
+        ("巳", "己"),  ("巳", "已"),
+        # Common Hanja confusion in Korean documents
+        ("日", "目"),  ("日", "曰"),
+        ("大", "太"),  ("大", "犬"),
+        ("人", "入"),
+        ("土", "士"),
+        ("十", "+"),
     ]
     _CHEONGAN_CHARS = set("甲乙丙丁戊己庚辛壬癸")
+    _JIJI_CHARS = set("子丑寅卯辰巳午未申酉戌亥")
     _CHEONGAN_DOC_KEYWORDS: list[list[str]] = [
         # exam documents
         ["문항", "정답", "배점", "수험번호", "시험시간", "시험"],
@@ -313,6 +327,8 @@ class CorrectionEngine:
         return sections
 
     def _call_correction_llm(self, text: str) -> str | None:
+        ocr_confusion_instruction = build_ocr_confusion_instruction(include_examples=True)
+
         prompt = f"""You are a Korean OCR post-correction expert.
 Fix spelling errors, wrong characters, and unnatural expressions in the following
 OCR-extracted text. The text is from a Korean document (may contain legal, exam,
@@ -327,6 +343,7 @@ Rules:
 6. Pay special attention to Hanja (甲乙丙丁), Roman numerals (ⅠⅡⅢ),
    and Korean numbering ((가)(나)(다)).
 7. Aggressiveness: {self.aggressiveness} – {"only fix clear errors" if self.aggressiveness == "conservative" else "fix probable errors too"}.
+{ocr_confusion_instruction}
 
 Text to correct:
 {text}

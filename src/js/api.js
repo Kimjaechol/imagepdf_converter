@@ -310,6 +310,11 @@ export async function connectProgress(jobId, onMessage) {
   }
 }
 
+// ─── HTML to Markdown ─────────────────────────────────
+export async function htmlToMarkdown(html) {
+  return await invoke("html_to_markdown", { html });
+}
+
 // ─── Editor Window ────────────────────────────────────
 export async function openEditorWindow(filePath) {
   return await invoke("open_editor_window", { filePath: filePath || null });

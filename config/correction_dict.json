@@ -1,8 +1,8 @@
 {
   "meta": {
-    "version": "1.0.0",
-    "description": "한국어 OCR 오류 교정 사전 - 갑을병정 한자, 로마자, 법률용어 등",
-    "last_updated": "2026-03-04"
+    "version": "2.0.0",
+    "description": "한국어 OCR 오류 교정 사전 - 혼동문자 그룹, 한자, 로마자, 법률용어 등",
+    "last_updated": "2026-03-11"
   },
   "hanja_corrections": {
     "甲": {
@@ -10,63 +10,145 @@
       "context": "갑을병정, 계약서"
     },
     "乙": {
-      "confused_with": ["2", "Z", "乃"],
-      "context": "갑을병정, 계약서"
+      "confused_with": ["2", "Z", "z", "乃", "己"],
+      "context": "갑을병정, 계약서, 등급"
     },
     "丙": {
-      "confused_with": ["内", "丹"],
-      "context": "갑을병정, 계약서"
+      "confused_with": ["内", "丹", "两"],
+      "context": "갑을병정, 계약서, 등급"
     },
     "丁": {
-      "confused_with": ["丅", "下", "了"],
-      "context": "갑을병정, 계약서"
+      "confused_with": ["丅", "下", "了", "T", "7"],
+      "context": "갑을병정, 계약서, 등급"
     },
     "戊": {
       "confused_with": ["成", "戌", "戍"],
       "context": "갑을병정"
     },
     "己": {
-      "confused_with": ["已", "巳", "口"],
-      "context": "갑을병정"
+      "confused_with": ["已", "巳", "口", "乙"],
+      "context": "갑을병정, 천간"
     },
     "庚": {
-      "confused_with": ["康", "庸"],
+      "confused_with": ["康", "庸", "庫"],
       "context": "갑을병정"
     },
     "辛": {
-      "confused_with": ["幸", "辜"],
+      "confused_with": ["幸", "辜", "立"],
       "context": "갑을병정"
     },
     "壬": {
-      "confused_with": ["任", "王"],
+      "confused_with": ["任", "王", "士"],
       "context": "갑을병정"
     },
     "癸": {
       "confused_with": ["発", "突"],
       "context": "갑을병정"
+    },
+    "日": {
+      "confused_with": ["目", "曰", "□"],
+      "context": "날짜, 요일"
+    },
+    "月": {
+      "confused_with": ["円", "肉"],
+      "context": "날짜"
+    },
+    "一": {
+      "confused_with": ["ー", "ㅡ", "—", "-"],
+      "context": "숫자, 서열"
+    },
+    "二": {
+      "confused_with": ["=", "ニ"],
+      "context": "숫자"
+    },
+    "三": {
+      "confused_with": ["≡", "彡", "ミ"],
+      "context": "숫자"
+    },
+    "十": {
+      "confused_with": ["+", "†"],
+      "context": "숫자"
+    },
+    "人": {
+      "confused_with": ["入", "ス"],
+      "context": "인명, 인원"
+    },
+    "大": {
+      "confused_with": ["太", "犬"],
+      "context": "크기, 등급"
+    },
+    "土": {
+      "confused_with": ["士", "±"],
+      "context": "요일, 지명"
     }
   },
   "roman_numeral_corrections": {
     "Ⅰ": {
-      "confused_with": ["I", "l", "1", "|", "ⅰ"],
-      "context_patterns": ["제{n}장", "제{n}편", "제{n}절"]
+      "confused_with": ["I", "l", "1", "|", "ⅰ", "ㅣ"],
+      "context_patterns": ["제{n}장", "제{n}편", "제{n}절", "{n}. 서론", "{n}. 본론"],
+      "note": "로마자 번호 뒤에 소제목이 나오는 경우가 많음"
     },
     "Ⅱ": {
       "confused_with": ["II", "ll", "11", "||"],
-      "context_patterns": ["제{n}장", "제{n}편"]
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
     },
     "Ⅲ": {
       "confused_with": ["III", "lll", "111"],
-      "context_patterns": ["제{n}장", "제{n}편"]
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
     },
     "Ⅳ": {
       "confused_with": ["IV", "lV", "1V"],
-      "context_patterns": ["제{n}장", "제{n}편"]
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
     },
     "Ⅴ": {
       "confused_with": ["V", "v", "5"],
-      "context_patterns": ["제{n}장", "제{n}편"]
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
+    },
+    "Ⅵ": {
+      "confused_with": ["VI", "Vl", "V1"],
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
+    },
+    "Ⅶ": {
+      "confused_with": ["VII", "Vll", "V11"],
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
+    },
+    "Ⅷ": {
+      "confused_with": ["VIII", "Vlll"],
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
+    },
+    "Ⅸ": {
+      "confused_with": ["IX", "lX", "1X"],
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
+    },
+    "Ⅹ": {
+      "confused_with": ["X", "x", "10"],
+      "context_patterns": ["제{n}장", "제{n}편", "{n}. "]
     }
+  },
+  "latin_numeral_confusion": {
+    "_description": "숫자 ↔ 영문자 혼동 쌍 (LLM 문맥 교정용 참조)",
+    "groups": [
+      {"chars": ["0", "O", "o"], "rule": "금액/날짜=숫자, 영단어=영문자"},
+      {"chars": ["1", "l", "I", "|", "ㅣ"], "rule": "숫자맥락=1, 영단어=I/l, 로마자번호=Ⅰ"},
+      {"chars": ["5", "S", "s"], "rule": "숫자맥락=5, 영단어=S"},
+      {"chars": ["8", "B"], "rule": "숫자맥락=8, 영단어=B"},
+      {"chars": ["2", "Z", "z"], "rule": "숫자맥락=2, 계약서=乙"},
+      {"chars": ["6", "G", "b"], "rule": "숫자맥락=6, 영단어=G/b"},
+      {"chars": ["9", "g", "q"], "rule": "숫자맥락=9, 영단어=g/q"},
+      {"chars": ["rn", "m"], "rule": "영단어 사전 매칭"},
+      {"chars": ["cl", "d"], "rule": "영단어 사전 매칭"},
+      {"chars": ["vv", "w"], "rule": "영단어 사전 매칭"}
+    ]
+  },
+  "korean_symbol_confusion": {
+    "_description": "한글 자모 ↔ 기호 혼동 (LLM 문맥 교정용 참조)",
+    "groups": [
+      {"chars": ["ㅁ", "□"], "rule": "한글자모=ㅁ, 도형/체크박스=□"},
+      {"chars": ["ㅇ", "O", "0"], "rule": "한글자모=ㅇ, 영문=O, 숫자=0"},
+      {"chars": ["—", "-", "ㅡ", "一"], "rule": "구두점=—, 범위=-, 한글자모=ㅡ, 한자=一"},
+      {"chars": [",", "."], "rule": "저해상도에서 혼동, 금액천단위=쉼표, 소수점=점"},
+      {"chars": [":", ";"], "rule": "시간=콜론, 문장구분=세미콜론"}
+    ]
   },
   "korean_numbering": {
     "(가)": {"confused_with": ["(7)", "(거)", "(기)"]},
@@ -101,7 +183,11 @@
     "헌법": {"confused_with": ["현법", "한법"]},
     "민법": {"confused_with": ["민봅", "민번"]},
     "형법": {"confused_with": ["형봅", "형번"]},
-    "상법": {"confused_with": ["상봅", "상번"]}
+    "상법": {"confused_with": ["상봅", "상번"]},
+    "甲방": {"confused_with": ["田방", "由방"]},
+    "乙방": {"confused_with": ["Z방", "z방", "2방"]},
+    "丙방": {"confused_with": ["内방"]},
+    "丁방": {"confused_with": ["T방", "7방"]}
   },
   "exam_terms": {
     "정답": {"confused_with": ["정달", "정당"]},
@@ -126,6 +212,11 @@
     "③": {"confused_with": ["(3)", "O3"]},
     "④": {"confused_with": ["(4)", "O4"]},
     "⑤": {"confused_with": ["(5)", "O5"]},
+    "⑥": {"confused_with": ["(6)", "O6"]},
+    "⑦": {"confused_with": ["(7)", "O7"]},
+    "⑧": {"confused_with": ["(8)", "O8"]},
+    "⑨": {"confused_with": ["(9)", "O9"]},
+    "⑩": {"confused_with": ["(10)", "O10"]},
     "※": {"confused_with": ["*", "X"]},
     "→": {"confused_with": ["-)", "->", "一>"]},
     "·": {"confused_with": [".", "。", ","]}

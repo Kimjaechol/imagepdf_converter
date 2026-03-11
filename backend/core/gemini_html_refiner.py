@@ -19,6 +19,8 @@ import os
 import re
 from pathlib import Path
 
+from backend.core.ocr_confusion import build_ocr_confusion_instruction_compact
+
 logger = logging.getLogger(__name__)
 
 # Max characters per chunk sent to Gemini
@@ -102,6 +104,7 @@ Focus on these FOUR critical areas:
 
 4. TEXT AND NUMBER CORRECTION:
    - Fix OCR errors in text (especially CJK characters)
+   {build_ocr_confusion_instruction_compact()}
    - CRITICAL: Fix displaced numbers/digits caused by MuPDF glyph width bugs
      Common patterns:
      - Numbers pushed to end of line: "년도 매출액은 원입니다 2024 1,000,000" → "2024년도 매출액은 1,000,000원입니다"

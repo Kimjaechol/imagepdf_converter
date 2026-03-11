@@ -114,6 +114,7 @@ fn main() {
             commands::document_cmd::convert_xlsx_to_html,
             commands::document_cmd::convert_pptx_to_html,
             commands::document_cmd::convert_any_document,
+            commands::document_cmd::html_to_markdown,
             // MoA gateway
             commands::moa_cmd::moa_convert,
             commands::moa_cmd::moa_health,

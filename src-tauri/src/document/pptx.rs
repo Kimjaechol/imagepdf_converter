@@ -153,7 +153,7 @@ fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
     let mut current_text = String::new();
     let mut para_texts: Vec<String> = Vec::new();
     let mut is_list_item = false;
-    let mut list_level: i32 = -1;
+    let mut _list_level: i32 = -1;
     let mut _para_alignment: Option<String> = None;
     // Table state
     let mut in_table = false;
@@ -276,7 +276,7 @@ fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
                         for attr in e.attributes().flatten() {
                             let key = local_name(attr.key.as_ref());
                             if key == "lvl" {
-                                list_level = String::from_utf8_lossy(&attr.value)
+                                _list_level = String::from_utf8_lossy(&attr.value)
                                     .parse()
                                     .unwrap_or(0);
                             }
@@ -403,7 +403,7 @@ fn parse_slide_xml(xml: &str, rels: &HashMap<String, String>) -> String {
                         }
                         current_text.clear();
                         is_list_item = false;
-                        list_level = -1;
+                        _list_level = -1;
                     }
                     "r" => {
                         in_run = false;
@@ -460,14 +460,7 @@ fn extract_slide_num(name: &str) -> u32 {
 }
 
 fn extract_between(text: &str, start_tag: &str, end_tag: &str) -> Option<String> {
-    let start = text.find(start_tag)? + start_tag.len();
-    let end = text[start..].find(end_tag)? + start;
-    let val = text[start..end].trim();
-    if val.is_empty() {
-        None
-    } else {
-        Some(val.to_string())
-    }
+    super::converter::extract_between(text, start_tag, end_tag)
 }
 
 /// Parse slide-level relationships (ppt/slides/_rels/slideN.xml.rels)
@@ -514,6 +507,5 @@ fn parse_pptx_relationships(xml: &str) -> HashMap<String, String> {
 }
 
 fn local_name(name: &[u8]) -> &str {
-    let s = std::str::from_utf8(name).unwrap_or("");
-    s.rsplit(':').next().unwrap_or(s)
+    super::converter::local_name(name)
 }
