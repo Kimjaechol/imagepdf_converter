@@ -976,14 +976,23 @@ async def auth_provider():
 
 @app.get("/api/credits")
 async def get_credits(user: dict = Depends(get_current_user)):
-    """Get the current user's credit balance."""
+    """Get the current user's credit balance with KRW equivalents."""
     svc = _get_credit_service()
     acct = svc.get_or_create_account(user["user_id"])
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
+    balance_usd = round(acct.balance_usd, 4)
+    purchased_usd = round(acct.total_purchased_usd, 4)
+    consumed_usd = round(acct.total_consumed_usd, 4)
     return {
         "user_id": acct.user_id,
-        "balance_usd": round(acct.balance_usd, 4),
-        "total_purchased_usd": round(acct.total_purchased_usd, 4),
-        "total_consumed_usd": round(acct.total_consumed_usd, 4),
+        "balance_usd": balance_usd,
+        "balance_krw": round(balance_usd * rate),
+        "total_purchased_usd": purchased_usd,
+        "total_purchased_krw": round(purchased_usd * rate),
+        "total_consumed_usd": consumed_usd,
+        "total_consumed_krw": round(consumed_usd * rate),
+        "exchange_rate": rate,
     }
 
 
@@ -994,44 +1003,84 @@ async def purchase_credits(req: PurchaseCreditsRequest, user: dict = Depends(get
         raise HTTPException(400, "Amount must be positive")
     svc = _get_credit_service()
     new_balance = svc.purchase_credits(user["user_id"], req.amount_usd)
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
+    new_balance_rounded = round(new_balance, 4)
     return {
         "amount_usd": req.amount_usd,
-        "new_balance_usd": round(new_balance, 4),
+        "amount_krw": round(req.amount_usd * rate),
+        "new_balance_usd": new_balance_rounded,
+        "new_balance_krw": round(new_balance_rounded * rate),
+        "exchange_rate": rate,
     }
 
 
 @app.post("/api/credits/estimate")
 async def estimate_cost(req: EstimateCostRequest):
-    """Estimate the credit cost for converting N pages (public, no auth needed)."""
+    """Estimate the credit cost for converting N pages with KRW equivalent."""
     svc = _get_credit_service()
-    return svc.estimate_cost(req.num_pages, doc_type=req.doc_type)
+    result = svc.estimate_cost(req.num_pages, doc_type=req.doc_type)
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
+    result["per_page_krw"] = round(result["per_page_usd"] * rate, 1)
+    result["charged_krw"] = round(result["charged_usd"] * rate)
+    result["exchange_rate"] = rate
+    return result
 
 
 @app.get("/api/credits/pricing")
 async def get_pricing():
-    """Return the public pricing table (no raw costs exposed)."""
+    """Return the public pricing table with KRW equivalents."""
     from backend.services.credit_service import (
         PRICE_IMAGE_PDF_PER_PAGE,
         PRICE_DIGITAL_PDF_PER_PAGE,
         PRICE_OTHER_PER_PAGE,
     )
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
     return {
         "pricing": [
-            {"doc_type": "image_pdf", "label": "Image PDF (scanned)", "per_page_usd": PRICE_IMAGE_PDF_PER_PAGE},
-            {"doc_type": "digital_pdf", "label": "Digital PDF", "per_page_usd": PRICE_DIGITAL_PDF_PER_PAGE},
-            {"doc_type": "other", "label": "HWP / HWPX / DOC / DOCX / XLS / XLSX / PPT / PPTX", "per_page_usd": PRICE_OTHER_PER_PAGE},
-        ]
+            {
+                "doc_type": "image_pdf",
+                "label": "Image PDF (scanned)",
+                "per_page_usd": PRICE_IMAGE_PDF_PER_PAGE,
+                "per_page_krw": round(PRICE_IMAGE_PDF_PER_PAGE * rate, 1),
+            },
+            {
+                "doc_type": "digital_pdf",
+                "label": "Digital PDF",
+                "per_page_usd": PRICE_DIGITAL_PDF_PER_PAGE,
+                "per_page_krw": round(PRICE_DIGITAL_PDF_PER_PAGE * rate, 1),
+            },
+            {
+                "doc_type": "other",
+                "label": "HWP / HWPX / DOC / DOCX / XLS / XLSX / PPT / PPTX",
+                "per_page_usd": PRICE_OTHER_PER_PAGE,
+                "per_page_krw": 0,
+            },
+        ],
+        "exchange_rate": rate,
     }
 
 
 @app.get("/api/credits/history")
 async def get_credit_history(user: dict = Depends(get_current_user), limit: int = 50):
-    """Get the current user's recent credit usage history."""
+    """Get the current user's recent credit usage history with KRW equivalents."""
     svc = _get_credit_service()
     acct = svc.get_or_create_account(user["user_id"])
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
     history = acct.usage_history[-limit:]
     history.reverse()
-    return {"history": history}
+    # Add KRW equivalents to each history entry
+    for entry in history:
+        if "charged_usd" in entry:
+            entry["charged_krw"] = round(entry["charged_usd"] * rate)
+        if "amount_usd" in entry:
+            entry["amount_krw"] = round(entry["amount_usd"] * rate)
+        if "balance_after" in entry:
+            entry["balance_after_krw"] = round(entry["balance_after"] * rate)
+    return {"history": history, "exchange_rate": rate}
 
 
 # ---------------------------------------------------------------------------

@@ -133,6 +133,21 @@ pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
+// ─── Exchange Rate ────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_exchange_rate() -> Result<serde_json::Value, String> {
+    let resp = reqwest::get(format!("{}/api/exchange-rate", backend_url()))
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get exchange rate").await?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
 // ─── Credits (authenticated) ──────────────────────────
 
 #[tauri::command]

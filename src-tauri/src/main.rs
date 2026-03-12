@@ -132,6 +132,7 @@ fn main() {
             // API key status (read-only) & Credits
             commands::credit_cmd::get_api_key_status,
             commands::credit_cmd::get_upstage_api_key_status,
+            commands::credit_cmd::get_exchange_rate,
             commands::credit_cmd::get_credits,
             commands::credit_cmd::purchase_credits,
             commands::credit_cmd::estimate_cost,

@@ -261,6 +261,11 @@ export async function getUpstageApiKeyStatus() {
   return await invoke("get_upstage_api_key_status");
 }
 
+// ─── Exchange Rate ────────────────────────────────────
+export async function getExchangeRate() {
+  return await invoke("get_exchange_rate", {});
+}
+
 // ─── Credits ──────────────────────────────────────────
 export async function getCredits() {
   return await invoke("get_credits", {});
