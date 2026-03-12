@@ -305,12 +305,12 @@ async function handleConvert() {
     return;
   }
 
-  // Warn if API key is not configured (OCR-only fallback will be used)
+  // Warn if API key is not configured on the server
   try {
     const keyStatus = await api.getApiKeyStatus();
     if (!keyStatus.configured) {
       showStatus(
-        "⚠ API 키 미설정: AI 레이아웃 분석 없이 기본 OCR만 사용됩니다. 설정에서 API 키를 입력하세요.",
+        "⚠ 서버 API 키 미설정: 관리자에게 문의하세요.",
         "warning",
       );
     }

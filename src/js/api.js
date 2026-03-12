@@ -252,17 +252,9 @@ export function setUserInfo(info) {
   localStorage.setItem("user_info", JSON.stringify(info));
 }
 
-// ─── API Key (operator only, kept for local dev) ─────
-export async function setApiKey(apiKey) {
-  return await invoke("set_api_key", { apiKey: apiKey });
-}
-
+// ─── API Key Status (read-only, operator sets via Railway env vars) ───
 export async function getApiKeyStatus() {
   return await invoke("get_api_key_status");
-}
-
-export async function setUpstageApiKey(apiKey) {
-  return await invoke("set_upstage_api_key", { apiKey: apiKey });
 }
 
 export async function getUpstageApiKeyStatus() {

@@ -163,10 +163,6 @@ class CustomTermRequest(BaseModel):
     confused_with: list[str]
 
 
-class SetApiKeyRequest(BaseModel):
-    api_key: str
-
-
 class SetPipelineModeRequest(BaseModel):
     mode: str  # kept for backward compat
 
@@ -404,93 +400,23 @@ async def add_dictionary_term(req: CustomTermRequest):
 
 
 # ---------------------------------------------------------------------------
-# API Key Management (Operator)
+# API Key Status (read-only) – keys come ONLY from Railway environment vars
 # ---------------------------------------------------------------------------
-
-def _api_key_file() -> Path:
-    """Return the path to the persisted API key file."""
-    p = Path("data")
-    p.mkdir(parents=True, exist_ok=True)
-    return p / "api_key.txt"
-
-
-def _load_persisted_api_key() -> None:
-    """Load the API key from disk into os.environ on startup."""
-    f = _api_key_file()
-    if f.exists():
-        key = f.read_text(encoding="utf-8").strip()
-        if key:
-            os.environ["GEMINI_API_KEY"] = key
-            logger.info("Loaded persisted Gemini API key (%s...)", key[:4])
-
-
-# Load on module import so the key is available immediately
-_load_persisted_api_key()
-
-
-@app.post("/api/settings/api-key")
-async def set_api_key(req: SetApiKeyRequest):
-    """Set the Gemini API key (operator only). Persisted to disk."""
-    os.environ["GEMINI_API_KEY"] = req.api_key
-    # Persist to file so it survives restarts
-    _api_key_file().write_text(req.api_key, encoding="utf-8")
-    logger.info("API key saved and persisted")
-    return {"status": "ok", "message": "API key configured"}
+# Operator sets GEMINI_API_KEY and UPSTAGE_API_KEY in Railway Variables.
+# No user-facing endpoints to set or view keys. Only status check (configured
+# or not) is exposed – no key values are ever returned.
 
 
 @app.get("/api/settings/api-key/status")
 async def get_api_key_status():
-    """Check if a Gemini API key is configured."""
-    key = os.environ.get("GEMINI_API_KEY", "")
-    return {
-        "configured": bool(key),
-        "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Upstage API Key – persisted to disk (same pattern as Gemini key)
-# ---------------------------------------------------------------------------
-
-def _upstage_api_key_file() -> Path:
-    """Return the path to the persisted Upstage API key file."""
-    p = Path("data")
-    p.mkdir(parents=True, exist_ok=True)
-    return p / "upstage_api_key.txt"
-
-
-def _load_persisted_upstage_api_key() -> None:
-    """Load the Upstage API key from disk into os.environ on startup."""
-    # Only load from file if the env var is not already set (e.g. by Railway)
-    if os.environ.get("UPSTAGE_API_KEY", ""):
-        return
-    f = _upstage_api_key_file()
-    if f.exists():
-        key = f.read_text(encoding="utf-8").strip()
-        if key:
-            os.environ["UPSTAGE_API_KEY"] = key
-            logger.info("Loaded persisted Upstage API key (%s...)", key[:4])
-
-
-_load_persisted_upstage_api_key()
-
-
-@app.post("/api/settings/upstage-api-key")
-async def set_upstage_api_key(req: SetApiKeyRequest):
-    """Set the Upstage API key. Persisted to disk."""
-    os.environ["UPSTAGE_API_KEY"] = req.api_key
-    _upstage_api_key_file().write_text(req.api_key, encoding="utf-8")
-    logger.info("Upstage API key saved and persisted")
-    return {"status": "ok", "message": "Upstage API key configured"}
+    """Check if the Gemini API key is configured (operator-only, via env var)."""
+    return {"configured": bool(os.environ.get("GEMINI_API_KEY", ""))}
 
 
 @app.get("/api/settings/upstage-api-key/status")
 async def get_upstage_api_key_status():
-    """Check if the Upstage API key is configured (no key value exposed)."""
-    key = os.environ.get("UPSTAGE_API_KEY", "")
-    return {
-        "configured": bool(key),
-    }
+    """Check if the Upstage API key is configured (operator-only, via env var)."""
+    return {"configured": bool(os.environ.get("UPSTAGE_API_KEY", ""))}
 
 
 # ---------------------------------------------------------------------------
