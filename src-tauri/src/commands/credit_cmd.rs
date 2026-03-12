@@ -105,24 +105,7 @@ pub async fn auth_refresh_token(
     Ok(result)
 }
 
-// ─── API Key (operator only) ──────────────────────────
-
-#[tauri::command]
-pub async fn set_api_key(api_key: String) -> Result<serde_json::Value, String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{}/api/settings/api-key", backend_url()))
-        .json(&serde_json::json!({ "api_key": api_key }))
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    let resp = check_response(resp, "Set API key").await?;
-
-    resp.json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("Parse failed: {}", e))
-}
+// ─── API Key Status (read-only, operator sets via Railway env vars) ───
 
 #[tauri::command]
 pub async fn get_api_key_status() -> Result<serde_json::Value, String> {
@@ -138,29 +121,27 @@ pub async fn get_api_key_status() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub async fn set_upstage_api_key(api_key: String) -> Result<serde_json::Value, String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{}/api/settings/upstage-api-key", backend_url()))
-        .json(&serde_json::json!({ "api_key": api_key }))
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    let resp = check_response(resp, "Set Upstage API key").await?;
-
-    resp.json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("Parse failed: {}", e))
-}
-
-#[tauri::command]
 pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
     let resp = reqwest::get(format!("{}/api/settings/upstage-api-key/status", backend_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
     let resp = check_response(resp, "Get Upstage API key status").await?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
+// ─── Exchange Rate ────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_exchange_rate() -> Result<serde_json::Value, String> {
+    let resp = reqwest::get(format!("{}/api/exchange-rate", backend_url()))
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Get exchange rate").await?;
 
     resp.json::<serde_json::Value>()
         .await

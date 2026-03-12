@@ -24,7 +24,7 @@ upstage:
 
 # Gemini visual correction model
 reading_order:
-  gemini_model: gemini-2.0-flash-lite
+  gemini_model: gemini-3.1-flash-lite-preview
   ollama_model: qwen2.5:7b
 
 # Language Correction (post-processing safety net)

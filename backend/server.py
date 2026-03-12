@@ -163,10 +163,6 @@ class CustomTermRequest(BaseModel):
     confused_with: list[str]
 
 
-class SetApiKeyRequest(BaseModel):
-    api_key: str
-
-
 class SetPipelineModeRequest(BaseModel):
     mode: str  # kept for backward compat
 
@@ -404,65 +400,23 @@ async def add_dictionary_term(req: CustomTermRequest):
 
 
 # ---------------------------------------------------------------------------
-# API Key Management (Operator)
+# API Key Status (read-only) – keys come ONLY from Railway environment vars
 # ---------------------------------------------------------------------------
-
-def _api_key_file() -> Path:
-    """Return the path to the persisted API key file."""
-    p = Path("data")
-    p.mkdir(parents=True, exist_ok=True)
-    return p / "api_key.txt"
-
-
-def _load_persisted_api_key() -> None:
-    """Load the API key from disk into os.environ on startup."""
-    f = _api_key_file()
-    if f.exists():
-        key = f.read_text(encoding="utf-8").strip()
-        if key:
-            os.environ["GEMINI_API_KEY"] = key
-            logger.info("Loaded persisted Gemini API key (%s...)", key[:4])
-
-
-# Load on module import so the key is available immediately
-_load_persisted_api_key()
-
-
-@app.post("/api/settings/api-key")
-async def set_api_key(req: SetApiKeyRequest):
-    """Set the Gemini API key (operator only). Persisted to disk."""
-    os.environ["GEMINI_API_KEY"] = req.api_key
-    # Persist to file so it survives restarts
-    _api_key_file().write_text(req.api_key, encoding="utf-8")
-    logger.info("API key saved and persisted")
-    return {"status": "ok", "message": "API key configured"}
+# Operator sets GEMINI_API_KEY and UPSTAGE_API_KEY in Railway Variables.
+# No user-facing endpoints to set or view keys. Only status check (configured
+# or not) is exposed – no key values are ever returned.
 
 
 @app.get("/api/settings/api-key/status")
 async def get_api_key_status():
-    """Check if a Gemini API key is configured."""
-    key = os.environ.get("GEMINI_API_KEY", "")
-    return {
-        "configured": bool(key),
-        "masked": f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Upstage API Key – operator only (Railway environment variable)
-# ---------------------------------------------------------------------------
-# The Upstage API key is read ONLY from the UPSTAGE_API_KEY environment
-# variable, which must be configured by the operator in Railway's Variables
-# tab. There is no user-facing endpoint to set or view the key.
+    """Check if the Gemini API key is configured (operator-only, via env var)."""
+    return {"configured": bool(os.environ.get("GEMINI_API_KEY", ""))}
 
 
 @app.get("/api/settings/upstage-api-key/status")
 async def get_upstage_api_key_status():
-    """Check if the Upstage API key is configured (no key value exposed)."""
-    key = os.environ.get("UPSTAGE_API_KEY", "")
-    return {
-        "configured": bool(key),
-    }
+    """Check if the Upstage API key is configured (operator-only, via env var)."""
+    return {"configured": bool(os.environ.get("UPSTAGE_API_KEY", ""))}
 
 
 # ---------------------------------------------------------------------------
@@ -1022,14 +976,23 @@ async def auth_provider():
 
 @app.get("/api/credits")
 async def get_credits(user: dict = Depends(get_current_user)):
-    """Get the current user's credit balance."""
+    """Get the current user's credit balance with KRW equivalents."""
     svc = _get_credit_service()
     acct = svc.get_or_create_account(user["user_id"])
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
+    balance_usd = round(acct.balance_usd, 4)
+    purchased_usd = round(acct.total_purchased_usd, 4)
+    consumed_usd = round(acct.total_consumed_usd, 4)
     return {
         "user_id": acct.user_id,
-        "balance_usd": round(acct.balance_usd, 4),
-        "total_purchased_usd": round(acct.total_purchased_usd, 4),
-        "total_consumed_usd": round(acct.total_consumed_usd, 4),
+        "balance_usd": balance_usd,
+        "balance_krw": round(balance_usd * rate),
+        "total_purchased_usd": purchased_usd,
+        "total_purchased_krw": round(purchased_usd * rate),
+        "total_consumed_usd": consumed_usd,
+        "total_consumed_krw": round(consumed_usd * rate),
+        "exchange_rate": rate,
     }
 
 
@@ -1040,44 +1003,84 @@ async def purchase_credits(req: PurchaseCreditsRequest, user: dict = Depends(get
         raise HTTPException(400, "Amount must be positive")
     svc = _get_credit_service()
     new_balance = svc.purchase_credits(user["user_id"], req.amount_usd)
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
+    new_balance_rounded = round(new_balance, 4)
     return {
         "amount_usd": req.amount_usd,
-        "new_balance_usd": round(new_balance, 4),
+        "amount_krw": round(req.amount_usd * rate),
+        "new_balance_usd": new_balance_rounded,
+        "new_balance_krw": round(new_balance_rounded * rate),
+        "exchange_rate": rate,
     }
 
 
 @app.post("/api/credits/estimate")
 async def estimate_cost(req: EstimateCostRequest):
-    """Estimate the credit cost for converting N pages (public, no auth needed)."""
+    """Estimate the credit cost for converting N pages with KRW equivalent."""
     svc = _get_credit_service()
-    return svc.estimate_cost(req.num_pages, doc_type=req.doc_type)
+    result = svc.estimate_cost(req.num_pages, doc_type=req.doc_type)
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
+    result["per_page_krw"] = round(result["per_page_usd"] * rate, 1)
+    result["charged_krw"] = round(result["charged_usd"] * rate)
+    result["exchange_rate"] = rate
+    return result
 
 
 @app.get("/api/credits/pricing")
 async def get_pricing():
-    """Return the public pricing table (no raw costs exposed)."""
+    """Return the public pricing table with KRW equivalents."""
     from backend.services.credit_service import (
         PRICE_IMAGE_PDF_PER_PAGE,
         PRICE_DIGITAL_PDF_PER_PAGE,
         PRICE_OTHER_PER_PAGE,
     )
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
     return {
         "pricing": [
-            {"doc_type": "image_pdf", "label": "Image PDF (scanned)", "per_page_usd": PRICE_IMAGE_PDF_PER_PAGE},
-            {"doc_type": "digital_pdf", "label": "Digital PDF", "per_page_usd": PRICE_DIGITAL_PDF_PER_PAGE},
-            {"doc_type": "other", "label": "HWP / HWPX / DOC / DOCX / XLS / XLSX / PPT / PPTX", "per_page_usd": PRICE_OTHER_PER_PAGE},
-        ]
+            {
+                "doc_type": "image_pdf",
+                "label": "Image PDF (scanned)",
+                "per_page_usd": PRICE_IMAGE_PDF_PER_PAGE,
+                "per_page_krw": round(PRICE_IMAGE_PDF_PER_PAGE * rate, 1),
+            },
+            {
+                "doc_type": "digital_pdf",
+                "label": "Digital PDF",
+                "per_page_usd": PRICE_DIGITAL_PDF_PER_PAGE,
+                "per_page_krw": round(PRICE_DIGITAL_PDF_PER_PAGE * rate, 1),
+            },
+            {
+                "doc_type": "other",
+                "label": "HWP / HWPX / DOC / DOCX / XLS / XLSX / PPT / PPTX",
+                "per_page_usd": PRICE_OTHER_PER_PAGE,
+                "per_page_krw": 0,
+            },
+        ],
+        "exchange_rate": rate,
     }
 
 
 @app.get("/api/credits/history")
 async def get_credit_history(user: dict = Depends(get_current_user), limit: int = 50):
-    """Get the current user's recent credit usage history."""
+    """Get the current user's recent credit usage history with KRW equivalents."""
     svc = _get_credit_service()
     acct = svc.get_or_create_account(user["user_id"])
+    exchange_svc = _get_exchange_rate_service()
+    rate = exchange_svc.rate
     history = acct.usage_history[-limit:]
     history.reverse()
-    return {"history": history}
+    # Add KRW equivalents to each history entry
+    for entry in history:
+        if "charged_usd" in entry:
+            entry["charged_krw"] = round(entry["charged_usd"] * rate)
+        if "amount_usd" in entry:
+            entry["amount_krw"] = round(entry["amount_usd"] * rate)
+        if "balance_after" in entry:
+            entry["balance_after_krw"] = round(entry["balance_after"] * rate)
+    return {"history": history, "exchange_rate": rate}
 
 
 # ---------------------------------------------------------------------------

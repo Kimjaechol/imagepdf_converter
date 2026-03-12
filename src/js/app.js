@@ -305,12 +305,12 @@ async function handleConvert() {
     return;
   }
 
-  // Warn if API key is not configured (OCR-only fallback will be used)
+  // Warn if API key is not configured on the server
   try {
     const keyStatus = await api.getApiKeyStatus();
     if (!keyStatus.configured) {
       showStatus(
-        "⚠ API 키 미설정: AI 레이아웃 분석 없이 기본 OCR만 사용됩니다. 설정에서 API 키를 입력하세요.",
+        "⚠ 서버 API 키 미설정: 관리자에게 문의하세요.",
         "warning",
       );
     }
@@ -849,18 +849,22 @@ function showAuthStatus(message, type) {
 }
 
 // ─── Credit Management ──────────────────────────────────
+function formatKRW(amount) {
+  return `\u20A9${Math.round(amount).toLocaleString()}`;
+}
+
 async function loadCreditBalance() {
   try {
     const info = await api.getCredits();
     const el = $("#credit-balance");
     if (el) {
-      el.textContent = `$${info.balance_usd.toFixed(4)}`;
+      el.innerHTML = `$${info.balance_usd.toFixed(4)} <span style="color:#888;font-size:0.9em">(${formatKRW(info.balance_krw)})</span>`;
       el.style.color = info.balance_usd > 0 ? "#4caf50" : "#f44336";
     }
     // Update header badge
     const badge = $("#user-balance-badge");
     if (badge) {
-      badge.textContent = `$${info.balance_usd.toFixed(2)}`;
+      badge.textContent = `$${info.balance_usd.toFixed(2)} (${formatKRW(info.balance_krw)})`;
     }
   } catch {
     // Not logged in or backend not ready
@@ -885,7 +889,7 @@ async function handlePurchaseCredit() {
   }
   try {
     const result = await api.purchaseCredits(amount);
-    showSettingsStatus(`$${amount.toFixed(2)} 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)}`, "success");
+    showSettingsStatus(`$${amount.toFixed(2)} (${formatKRW(result.amount_krw)}) 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)} (${formatKRW(result.new_balance_krw)})`, "success");
     loadCreditBalance();
   } catch (e) {
     showSettingsStatus(`충전 실패: ${e}`, "error");
@@ -907,8 +911,9 @@ async function handleEstimateCost() {
       } else {
         el.innerHTML = `
           ${typeLabel} ${pages}페이지:<br>
-          단가: $${est.per_page_usd} / 페이지<br>
-          합계: <strong>$${est.charged_usd.toFixed(4)}</strong>
+          단가: $${est.per_page_usd} / 페이지 (${formatKRW(est.per_page_krw)})<br>
+          합계: <strong>$${est.charged_usd.toFixed(4)} (${formatKRW(est.charged_krw)})</strong><br>
+          <span style="font-size:0.85em;color:#888;">환율: 1 USD = ${formatKRW(est.exchange_rate)}</span>
         `;
       }
     }
@@ -918,10 +923,20 @@ async function handleEstimateCost() {
 }
 
 // ─── Credit Exhausted Popup ─────────────────────────────
-function showCreditExhaustedPopup() {
+async function showCreditExhaustedPopup() {
   // Remove existing popup if any
   const existing = document.getElementById("credit-popup-overlay");
   if (existing) existing.remove();
+
+  // Fetch exchange rate for KRW display
+  let rate = 1350;
+  try {
+    const rateInfo = await api.getExchangeRate();
+    if (rateInfo && rateInfo.rate) rate = rateInfo.rate;
+  } catch { /* use default */ }
+
+  const imgPdfKrw = Math.round(0.02 * rate);
+  const digPdfKrw = Math.round(0.005 * rate);
 
   const overlay = document.createElement("div");
   overlay.id = "credit-popup-overlay";
@@ -943,7 +958,7 @@ function showCreditExhaustedPopup() {
       <p style="color: #666; margin: 0 0 20px 0; line-height: 1.6;">
         PDF 문서 변환을 계속하려면 크레딧을 충전해 주세요.<br>
         <span style="font-size: 13px; color: #999;">
-          이미지 PDF: $0.02/페이지 &middot; 디지털 PDF: $0.005/페이지<br>
+          이미지 PDF: $0.02/페이지 (\u20A9${imgPdfKrw}) &middot; 디지털 PDF: $0.005/페이지 (\u20A9${digPdfKrw})<br>
           기타 문서 (DOCX, HWPX 등): 무료
         </span>
       </p>
