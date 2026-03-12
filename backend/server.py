@@ -449,11 +449,39 @@ async def get_api_key_status():
 
 
 # ---------------------------------------------------------------------------
-# Upstage API Key – operator only (Railway environment variable)
+# Upstage API Key – persisted to disk (same pattern as Gemini key)
 # ---------------------------------------------------------------------------
-# The Upstage API key is read ONLY from the UPSTAGE_API_KEY environment
-# variable, which must be configured by the operator in Railway's Variables
-# tab. There is no user-facing endpoint to set or view the key.
+
+def _upstage_api_key_file() -> Path:
+    """Return the path to the persisted Upstage API key file."""
+    p = Path("data")
+    p.mkdir(parents=True, exist_ok=True)
+    return p / "upstage_api_key.txt"
+
+
+def _load_persisted_upstage_api_key() -> None:
+    """Load the Upstage API key from disk into os.environ on startup."""
+    # Only load from file if the env var is not already set (e.g. by Railway)
+    if os.environ.get("UPSTAGE_API_KEY", ""):
+        return
+    f = _upstage_api_key_file()
+    if f.exists():
+        key = f.read_text(encoding="utf-8").strip()
+        if key:
+            os.environ["UPSTAGE_API_KEY"] = key
+            logger.info("Loaded persisted Upstage API key (%s...)", key[:4])
+
+
+_load_persisted_upstage_api_key()
+
+
+@app.post("/api/settings/upstage-api-key")
+async def set_upstage_api_key(req: SetApiKeyRequest):
+    """Set the Upstage API key. Persisted to disk."""
+    os.environ["UPSTAGE_API_KEY"] = req.api_key
+    _upstage_api_key_file().write_text(req.api_key, encoding="utf-8")
+    logger.info("Upstage API key saved and persisted")
+    return {"status": "ok", "message": "Upstage API key configured"}
 
 
 @app.get("/api/settings/upstage-api-key/status")
