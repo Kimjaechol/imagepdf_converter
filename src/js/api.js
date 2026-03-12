@@ -213,6 +213,27 @@ export async function setAuthToken(token) {
   }
 }
 
+export async function refreshAuthToken() {
+  const refreshToken = localStorage.getItem("refresh_token");
+  if (!refreshToken) return null;
+  try {
+    const result = await invoke("auth_refresh_token", { refreshToken });
+    if (result.token) {
+      await setAuthToken(result.token);
+      if (result.refresh_token) {
+        localStorage.setItem("refresh_token", result.refresh_token);
+      }
+      if (result.user_id) {
+        setUserInfo(result);
+      }
+      return result;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function clearAuth() {
   localStorage.removeItem("auth_token");
   localStorage.removeItem("user_info");

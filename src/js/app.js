@@ -36,18 +36,30 @@ document.addEventListener("DOMContentLoaded", async () => {
   await checkBackendHealth();
   setInterval(checkBackendHealth, 10000);
 
-  // Restore auth state – if valid token exists, skip login overlay
+  // Restore auth state – validate token before skipping login
   const token = api.getAuthToken();
   if (token) {
     try {
       await api.setAuthToken(token);
+      // Verify the token is still valid by calling getMe
+      await api.getMe();
       const userInfo = api.getUserInfo();
       if (userInfo) {
         hideLoginOverlay();
         updateAuthUI();
         return;
       }
-    } catch { /* token invalid, show login */ }
+    } catch {
+      // Token expired or invalid – try refresh
+      const refreshed = await api.refreshAuthToken();
+      if (refreshed) {
+        hideLoginOverlay();
+        updateAuthUI();
+        return;
+      }
+      // Refresh also failed – clear stale auth data
+      api.clearAuth();
+    }
   }
   // No valid session – show login overlay
   showLoginOverlay();
@@ -352,14 +364,41 @@ async function convertSingle() {
   updateProgress(30, label);
 
   try {
-    const result = await api.convertDocument(
-      state.selectedFile,
-      state.outputDir,
-      state.formats,
-      state.translate,
-      state.sourceLanguage,
-      state.targetLanguage
-    );
+    let result;
+    try {
+      result = await api.convertDocument(
+        state.selectedFile,
+        state.outputDir,
+        state.formats,
+        state.translate,
+        state.sourceLanguage,
+        state.targetLanguage
+      );
+    } catch (firstErr) {
+      // If 401 Unauthorized, try refreshing the token and retry once
+      if (String(firstErr).includes("401")) {
+        const refreshed = await api.refreshAuthToken();
+        if (refreshed) {
+          result = await api.convertDocument(
+            state.selectedFile,
+            state.outputDir,
+            state.formats,
+            state.translate,
+            state.sourceLanguage,
+            state.targetLanguage
+          );
+        } else {
+          // Refresh failed – force re-login
+          api.clearAuth();
+          updateAuthUI();
+          showLoginOverlay();
+          showStatus("세션이 만료되었습니다. 다시 로그인해주세요.", "error");
+          return;
+        }
+      } else {
+        throw firstErr;
+      }
+    }
 
     // If backend returned a job_id, track progress via WebSocket
     if (result.job_id) {
