@@ -73,6 +73,38 @@ pub async fn set_auth_token(app: tauri::AppHandle, token: String) -> Result<(), 
     Ok(())
 }
 
+#[tauri::command]
+pub async fn auth_refresh_token(
+    app: tauri::AppHandle,
+    refresh_token: String,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/auth/refresh", backend_url()))
+        .json(&serde_json::json!({
+            "refresh_token": refresh_token,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Token refresh").await?;
+
+    let result: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))?;
+
+    // Auto-update the Rust-side auth token if refresh succeeded
+    if let Some(new_token) = result.get("token").and_then(|t| t.as_str()) {
+        let state = app.state::<crate::AuthToken>();
+        let mut t = state.0.lock().unwrap_or_else(|e: std::sync::PoisonError<std::sync::MutexGuard<'_, String>>| e.into_inner());
+        *t = new_token.to_string();
+    }
+
+    Ok(result)
+}
+
 // ─── API Key (operator only) ──────────────────────────
 
 #[tauri::command]

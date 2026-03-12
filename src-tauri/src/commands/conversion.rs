@@ -85,7 +85,7 @@ pub async fn convert_pdf(app: tauri::AppHandle, request: ConvertRequest) -> Resu
 }
 
 #[tauri::command]
-pub async fn convert_batch(request: BatchRequest) -> Result<serde_json::Value, String> {
+pub async fn convert_batch(app: tauri::AppHandle, request: BatchRequest) -> Result<serde_json::Value, String> {
     let output_dir = request.output_dir.clone().unwrap_or_else(|| {
         request.folder_path.clone()
     });
@@ -102,6 +102,7 @@ pub async fn convert_batch(request: BatchRequest) -> Result<serde_json::Value, S
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/api/convert/batch", backend_url()))
+        .header("Authorization", auth_header(&app))
         .json(&payload)
         .send()
         .await
