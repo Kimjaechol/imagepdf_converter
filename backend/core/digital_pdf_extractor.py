@@ -724,23 +724,168 @@ class DigitalPdfExtractor:
     def is_digital_pdf(pdf_path: Path) -> bool:
         """Detect if a PDF has embedded text (digital) vs image-only (scanned).
 
-        Checks first few pages for extractable text.
-        Returns True if the PDF has meaningful digital text.
+        Uses a two-tier detection strategy for reliability and speed:
+
+        1. **Font resource check** (fast): Inspect page /Font resources.
+           If a page has no /Font entries at all, it is very likely image-only.
+        2. **Text layer check** (definitive): Extract text from sampled pages.
+           If extractable text length > threshold, the page has a text layer.
+
+        Sampling strategy for large PDFs:
+          - Pages from start, middle, and end (up to 5 samples total).
+          - A page is considered "digital" if it has both font resources AND
+            meaningful extracted text (> 50 chars).
+          - The PDF is digital if >= 50 % of sampled pages are digital.
+
+        Returns True if the PDF has meaningful digital text layers.
         """
         try:
             import fitz
             doc = fitz.open(str(pdf_path))
-            check_pages = min(3, len(doc))
-            text_pages = 0
+            total_pages = len(doc)
 
-            for i in range(check_pages):
-                page = doc[i]
+            if total_pages == 0:
+                doc.close()
+                return False
+
+            # Build sample page indices: start + middle + end
+            sample_indices = _build_sample_indices(total_pages, max_samples=5)
+            digital_pages = 0
+
+            for idx in sample_indices:
+                page = doc[idx]
+
+                # Tier 1: Font resource check (fast)
+                has_fonts = _page_has_font_resources(page)
+
+                # Tier 2: Text layer check (definitive)
                 text = page.get_text("text").strip()
-                if len(text) > 50:
-                    text_pages += 1
+                has_text = len(text) > 50
+
+                if has_fonts and has_text:
+                    digital_pages += 1
 
             doc.close()
-            return text_pages >= check_pages / 2
 
-        except Exception:
+            # Digital if >= 50% of sampled pages have text+fonts
+            return digital_pages >= len(sample_indices) / 2
+
+        except Exception as exc:
+            logger.warning("PDF type detection failed for %s: %s", pdf_path, exc)
             return False
+
+    @staticmethod
+    def detect_pdf_type(pdf_path: Path) -> dict:
+        """Detailed PDF type detection with diagnostic info.
+
+        Returns a dict with:
+          - is_digital: bool
+          - total_pages: int
+          - sampled_pages: int
+          - digital_pages: int
+          - details: list of per-page info
+        """
+        try:
+            import fitz
+            doc = fitz.open(str(pdf_path))
+            total_pages = len(doc)
+
+            if total_pages == 0:
+                doc.close()
+                return {
+                    "is_digital": False,
+                    "total_pages": 0,
+                    "sampled_pages": 0,
+                    "digital_pages": 0,
+                    "details": [],
+                }
+
+            sample_indices = _build_sample_indices(total_pages, max_samples=5)
+            digital_pages = 0
+            details = []
+
+            for idx in sample_indices:
+                page = doc[idx]
+                has_fonts = _page_has_font_resources(page)
+                text = page.get_text("text").strip()
+                text_len = len(text)
+                has_text = text_len > 50
+
+                is_digital_page = has_fonts and has_text
+                if is_digital_page:
+                    digital_pages += 1
+
+                details.append({
+                    "page_index": idx,
+                    "has_fonts": has_fonts,
+                    "text_length": text_len,
+                    "is_digital": is_digital_page,
+                })
+
+            doc.close()
+
+            is_digital = digital_pages >= len(sample_indices) / 2
+
+            return {
+                "is_digital": is_digital,
+                "total_pages": total_pages,
+                "sampled_pages": len(sample_indices),
+                "digital_pages": digital_pages,
+                "details": details,
+            }
+
+        except Exception as exc:
+            logger.warning("PDF type detection failed for %s: %s", pdf_path, exc)
+            return {
+                "is_digital": False,
+                "total_pages": 0,
+                "sampled_pages": 0,
+                "digital_pages": 0,
+                "details": [],
+                "error": str(exc),
+            }
+
+
+# ------------------------------------------------------------------
+# Module-level helpers for PDF type detection
+# ------------------------------------------------------------------
+
+def _build_sample_indices(total_pages: int, max_samples: int = 5) -> list[int]:
+    """Build a list of page indices to sample: start, middle, end.
+
+    For small PDFs (≤ max_samples pages), samples all pages.
+    For larger PDFs, picks pages from start, middle, and end.
+    """
+    if total_pages <= max_samples:
+        return list(range(total_pages))
+
+    indices = set()
+    # First 2 pages
+    indices.add(0)
+    if total_pages > 1:
+        indices.add(1)
+    # Middle page(s)
+    mid = total_pages // 2
+    indices.add(mid)
+    if total_pages > 4:
+        indices.add(mid - 1)
+    # Last page
+    indices.add(total_pages - 1)
+
+    return sorted(indices)[:max_samples]
+
+
+def _page_has_font_resources(page) -> bool:
+    """Check if a PDF page has /Font entries in its resource dictionary.
+
+    If a page has no font resources, it almost certainly has no text objects
+    and is image-only (scanned).  This check is faster than extracting text.
+    """
+    try:
+        # PyMuPDF exposes page resources via xref inspection
+        # get_fonts() returns a list of (xref, ext, type, basename, name, enc)
+        fonts = page.get_fonts(full=False)
+        return len(fonts) > 0
+    except Exception:
+        # Fallback: if font inspection fails, assume fonts might exist
+        return True

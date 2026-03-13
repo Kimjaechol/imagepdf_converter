@@ -483,6 +483,55 @@ async def get_pipeline_mode():
 # ---------------------------------------------------------------------------
 
 
+class PdfTypeCheckRequest(BaseModel):
+    pdf_path: str
+
+
+@app.post("/api/diagnostics/pdf-type")
+async def check_pdf_type(req: PdfTypeCheckRequest):
+    """Detect whether a PDF is digital (text-based) or image-only (scanned).
+
+    Uses dual-tier detection: font resource check + text layer extraction.
+    Returns detailed per-page diagnostic info.
+    """
+    pdf_path = Path(req.pdf_path)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found")
+
+    try:
+        from backend.core.digital_pdf_extractor import DigitalPdfExtractor
+        extractor = DigitalPdfExtractor()
+        report = await asyncio.get_event_loop().run_in_executor(
+            None, extractor.detect_pdf_type, pdf_path,
+        )
+        return report
+    except Exception as exc:
+        logger.error("PDF type detection failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/pdf2htmlex")
+async def pdf2htmlex_status():
+    """Check if pdf2htmlEX is installed and get version info."""
+    try:
+        from backend.core.pdf2html_renderer import (
+            is_pdf2htmlex_available,
+            get_pdf2htmlex_version,
+        )
+        available = is_pdf2htmlex_available()
+        version = get_pdf2htmlex_version() if available else None
+        return {
+            "available": available,
+            "version": version,
+            "description": (
+                "pdf2htmlEX produces high-fidelity viewer HTML. "
+                "If not installed, PyMuPDF fallback is used."
+            ),
+        }
+    except Exception as exc:
+        return {"available": False, "version": None, "error": str(exc)}
+
+
 class BidiCheckRequest(BaseModel):
     pdf_path: str
 
@@ -1491,10 +1540,19 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
         output_files = []
         output_dir = Path(req.output_dir)
         filename = Path(req.input_path).stem
+        html_file = None
+        md_file = None
+        viewer_file = None
+
         if result.html:
-            output_files.append(str(output_dir / f"{filename}.html"))
+            html_file = str(output_dir / f"{filename}.html")
+            output_files.append(html_file)
         if result.markdown:
-            output_files.append(str(output_dir / f"{filename}.md"))
+            md_file = str(output_dir / f"{filename}.md")
+            output_files.append(md_file)
+        if result.viewer_html:
+            viewer_file = str(output_dir / "viewer" / "viewer.html")
+            output_files.append(viewer_file)
 
         _jobs[job_id]["status"] = "completed"
         _jobs[job_id]["progress"] = 1.0
@@ -1503,6 +1561,11 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
             "total_pages": result.total_pages,
             "output_dir": req.output_dir,
             "output_files": output_files,
+            "html_file": html_file,
+            "md_file": md_file,
+            "viewer_file": viewer_file,
+            "is_digital": result.metadata.get("is_digital", False),
+            "has_viewer": result.metadata.get("has_viewer", False),
             "elapsed_seconds": result.metadata.get("elapsed_seconds", 0),
         }
 

@@ -756,26 +756,36 @@ async function showResults(result) {
       const filePath = item.dataset.path;
       const ext = filePath.split(".").pop().toLowerCase();
       if (ext === "html" || ext === "htm") {
-        // Open HTML files in the built-in editor
-        try {
-          await api.openEditorWindow(filePath);
-        } catch (e) {
-          // Fallback to system open
-          api.openFile(filePath);
-        }
+        // Open HTML files in the 2-layer editor (with viewer + md paths)
+        openEditorWithResult(result, filePath);
       } else {
         api.openFile(filePath);
       }
     });
   });
 
-  // Auto-open the first HTML file in the editor after conversion
-  const firstHtml = files.find((f) => /\.html?$/i.test(f));
-  if (firstHtml) {
+  // Auto-open the editor after conversion with all file paths
+  const htmlFile = result?.html_file || files.find((f) => /\.html?$/i.test(f) && !f.includes("viewer"));
+  if (htmlFile) {
+    openEditorWithResult(result, htmlFile);
+  }
+}
+
+/**
+ * Open the 2-layer editor with viewer, content HTML, and markdown paths.
+ */
+async function openEditorWithResult(result, htmlFile) {
+  try {
+    const viewerFile = result?.viewer_file || null;
+    const mdFile = result?.md_file || null;
+    await api.openEditorWindow(htmlFile, viewerFile, mdFile);
+  } catch (e) {
+    console.warn("Auto-open editor failed:", e);
+    // Fallback to simple open
     try {
-      await api.openEditorWindow(firstHtml);
-    } catch (e) {
-      console.warn("Auto-open editor failed:", e);
+      await api.openEditorWindow(htmlFile);
+    } catch {
+      api.openFile(htmlFile);
     }
   }
 }

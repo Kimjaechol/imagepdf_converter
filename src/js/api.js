@@ -386,8 +386,12 @@ export async function htmlToMarkdown(html) {
 }
 
 // ─── Editor Window ────────────────────────────────────
-export async function openEditorWindow(filePath) {
-  return await invoke("open_editor_window", { filePath: filePath || null });
+export async function openEditorWindow(filePath, viewerPath, mdPath) {
+  return await invoke("open_editor_window", {
+    filePath: filePath || null,
+    viewerPath: viewerPath || null,
+    mdPath: mdPath || null,
+  });
 }
 
 // ─── Utility ─────────────────────────────────────────

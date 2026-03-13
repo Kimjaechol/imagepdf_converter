@@ -325,9 +325,16 @@ class Pipeline:
         if "markdown" in job.output_formats:
             result.markdown = self.md_renderer.render(all_pages)
 
+        # ── Step 7b: Generate viewer HTML (pdf2htmlEX or fallback) ──
+        # Only for digital PDFs – produces a high-fidelity layout-preserving
+        # HTML for the read-only viewer layer.
+        if is_digital and "html" in job.output_formats:
+            self.progress_callback("Generating viewer HTML", 0.92)
+            result.viewer_html = self._generate_viewer_html(job)
+
         # ── Step 8: Save ──
         self.progress_callback("Saving files", 0.95)
-        self._save_outputs(result, job)
+        self._save_outputs(result, job, is_digital=is_digital)
 
         elapsed = time.time() - start
         self.progress_callback(f"Done in {elapsed:.1f}s", 1.0)
@@ -514,21 +521,77 @@ class Pipeline:
         doc.close()
         return page_images
 
-    def _save_outputs(self, result: DocumentResult, job: PdfJob) -> None:
-        """Save HTML and Markdown files to disk."""
+    def _generate_viewer_html(self, job: PdfJob) -> str:
+        """Generate high-fidelity viewer HTML using pdf2htmlEX (or fallback).
+
+        The viewer HTML preserves the original PDF layout as closely as possible
+        using absolute positioning. It is read-only – editing happens in the
+        Tiptap editor which works with the structured Markdown/HTML.
+        """
+        from .pdf2html_renderer import (
+            is_pdf2htmlex_available,
+            render_pdf_to_viewer_html,
+            render_pdf_to_viewer_html_fallback,
+        )
+
+        viewer_dir = job.output_dir / "viewer"
+        viewer_dir.mkdir(parents=True, exist_ok=True)
+
+        viewer_path = None
+
+        if is_pdf2htmlex_available():
+            viewer_path = render_pdf_to_viewer_html(
+                job.input_path,
+                viewer_dir,
+                output_filename="viewer.html",
+            )
+
+        if viewer_path is None:
+            # Fallback to PyMuPDF HTML rendering
+            viewer_path = render_pdf_to_viewer_html_fallback(
+                job.input_path,
+                viewer_dir,
+                output_filename="viewer.html",
+            )
+
+        if viewer_path and viewer_path.exists():
+            return viewer_path.read_text(encoding="utf-8")
+
+        return ""
+
+    def _save_outputs(
+        self, result: DocumentResult, job: PdfJob, *, is_digital: bool = False,
+    ) -> None:
+        """Save HTML, Markdown, and viewer HTML files to disk."""
         job.output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_files = []
 
         if result.html:
             html_path = job.output_dir / f"{job.filename or 'output'}.html"
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(result.html)
+            output_files.append(str(html_path))
             logger.info("Saved HTML: %s", html_path)
 
         if result.markdown:
             md_path = job.output_dir / f"{job.filename or 'output'}.md"
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(result.markdown)
+            output_files.append(str(md_path))
             logger.info("Saved Markdown: %s", md_path)
+
+        if result.viewer_html:
+            viewer_path = job.output_dir / "viewer" / "viewer.html"
+            # viewer.html is already saved by _generate_viewer_html,
+            # but ensure it's tracked
+            if viewer_path.exists():
+                output_files.append(str(viewer_path))
+                logger.info("Viewer HTML: %s", viewer_path)
+
+        result.metadata["output_files"] = output_files
+        result.metadata["is_digital"] = is_digital
+        result.metadata["has_viewer"] = bool(result.viewer_html)
 
     def process_folder(
         self,

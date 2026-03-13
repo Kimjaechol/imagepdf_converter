@@ -202,6 +202,7 @@ class DocumentResult:
     pages: list[PageResult] = field(default_factory=list)
     html: str = ""
     markdown: str = ""
+    viewer_html: str = ""  # High-fidelity viewer HTML (pdf2htmlEX or fallback)
     images: dict[str, str] = field(default_factory=dict)  # id -> path
     metadata: dict[str, Any] = field(default_factory=dict)
 
