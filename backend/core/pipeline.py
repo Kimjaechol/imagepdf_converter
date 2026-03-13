@@ -97,6 +97,7 @@ class PipelineConfig:
         layout = data.get("layout", {})
         ocr = data.get("ocr", {})
         table = data.get("table", {})
+        user_llm = data.get("user_llm", {})
 
         return cls(
             dpi=pipe.get("dpi", 300),
@@ -132,6 +133,10 @@ class PipelineConfig:
             heading_mode=head.get("mode", "hybrid"),
             heading_llm=head.get("llm_provider", "gemini"),
             heading_ollama_model=head.get("ollama_model", "qwen2.5:0.5b-instruct"),
+            # User LLM correction
+            user_llm_provider=user_llm.get("provider", ""),
+            user_llm_api_key=user_llm.get("api_key", ""),
+            user_llm_model=user_llm.get("model", ""),
         )
 
 

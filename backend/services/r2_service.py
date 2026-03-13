@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,7 @@ class R2Service:
                 Key=object_key,
             )
             return True
-        except self.client.exceptions.ClientError:
+        except ClientError:
             return False
         except Exception:
             return False
