@@ -225,6 +225,39 @@
         </select>
       </div>
 
+      <!-- LLM Correction API Key (user-provided, stored locally) -->
+      <div class="section-label" style="margin-top:20px">AI 교정 설정 (선택사항)</div>
+      <div class="setting-hint" style="margin-bottom:8px;line-height:1.5">
+        자체 LLM API 키를 입력하면 변환 후 AI 교정이 적용됩니다.<br>
+        키는 로컬에만 저장되며 서버로 전송되지 않습니다.<br>
+        키를 입력하지 않으면 교정 없이 변환 결과만 반환됩니다.
+      </div>
+
+      <div class="setting-group">
+        <label>AI 제공자</label>
+        <select id="set-llm-provider" class="setting-input">
+          <option value="">사용 안 함 (교정 없음)</option>
+          <option value="gemini">Google Gemini (gemini-2.5-flash-lite)</option>
+          <option value="openai">OpenAI (gpt-4.1-mini)</option>
+          <option value="claude">Anthropic Claude (claude-sonnet-4-5-20250514)</option>
+        </select>
+      </div>
+
+      <div class="setting-group" id="llm-key-group" style="display:none">
+        <label>API 키</label>
+        <input type="password" id="set-llm-api-key" placeholder="sk-... / AIza... 등" class="setting-input">
+      </div>
+
+      <div class="setting-group" id="llm-model-group" style="display:none">
+        <label>모델 (선택, 비워두면 기본값)</label>
+        <input type="text" id="set-llm-model" placeholder="기본 모델 사용" class="setting-input">
+      </div>
+
+      <div id="llm-save-group" style="display:none;margin-top:8px">
+        <button id="btn-save-llm" class="btn btn-sm" style="width:100%">AI 교정 설정 저장</button>
+      </div>
+      <div id="llm-status" class="setting-hint" style="margin-top:4px"></div>
+
       <!-- Auth Section (shown when not logged in) -->
       <div id="auth-section">
         <div class="section-label" style="margin-top:20px">로그인 / 회원가입</div>

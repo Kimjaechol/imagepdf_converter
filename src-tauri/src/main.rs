@@ -139,6 +139,12 @@ fn main() {
             commands::credit_cmd::get_pricing,
             commands::credit_cmd::get_credit_history,
             commands::credit_cmd::create_checkout,
+            // R2 Upload & Image PDF parsing
+            commands::credit_cmd::r2_status,
+            commands::credit_cmd::r2_presigned_upload,
+            commands::credit_cmd::parse_image_pdf,
+            // Local LLM correction
+            commands::credit_cmd::correct_with_llm,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

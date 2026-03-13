@@ -18,6 +18,7 @@ from typing import Any, Callable
 import yaml
 
 from backend.models.schema import (
+    BlockType,
     DocumentResult,
     LayoutBlock,
     PageResult,
@@ -57,6 +58,13 @@ class PipelineConfig:
     # Gemini visual comparison
     gemini_visual_batch_size: int = 3
     gemini_max_structure_change: float = 0.3
+
+    # ── User-provided LLM correction (optional, runs locally) ──
+    # If user provides their own API key, LLM correction runs on their machine
+    # provider: "gemini" | "openai" | "claude" | "" (disabled)
+    user_llm_provider: str = ""
+    user_llm_api_key: str = ""
+    user_llm_model: str = ""  # empty = use default for provider
 
     # ── kept for backward-compat with server.py / YAML ──
     pipeline_mode: str = "upstage_hybrid"
@@ -168,6 +176,7 @@ class Pipeline:
         self._upstage_parser = None
         self._digital_extractor = None
         self._gemini_refiner = None
+        self._user_llm_corrector = None
 
     # ------------------------------------------------------------------
     # Lazy properties
@@ -205,6 +214,18 @@ class Pipeline:
                 ),
             )
         return self._gemini_refiner
+
+    @property
+    def user_llm_corrector(self):
+        """User-provided LLM corrector (optional, runs locally)."""
+        if self._user_llm_corrector is None and self.cfg.user_llm_provider:
+            from .llm_corrector import create_corrector
+            self._user_llm_corrector = create_corrector(
+                provider=self.cfg.user_llm_provider,
+                api_key=self.cfg.user_llm_api_key,
+                model=self.cfg.user_llm_model,
+            )
+        return self._user_llm_corrector
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -251,10 +272,20 @@ class Pipeline:
                 job, images_dir,
             )
 
-        # ── Step 3: Gemini visual comparison ──
+        # ── Step 3: Gemini visual comparison (operator key, optional) ──
+        # Only runs if GEMINI_API_KEY is set on the server (operator's key).
+        # If not set, skip this step – user can optionally use their own
+        # LLM key for correction in Step 3b.
         all_pages = self._refine_with_gemini(
             all_pages, page_images, job,
         )
+
+        # ── Step 3b: User LLM correction (user's own API key, optional) ──
+        # If the user provided their own LLM API key (Gemini/OpenAI/Claude),
+        # apply additional correction locally on their machine.
+        if self.user_llm_corrector:
+            self.progress_callback("사용자 LLM 교정 중", 0.75)
+            all_pages = self._correct_with_user_llm(all_pages, is_digital)
 
         # ── Step 4: Dictionary-based correction ──
         self.progress_callback("Applying dictionary corrections", 0.80)
@@ -406,6 +437,46 @@ class Pipeline:
             refinement_result.pages_rejected,
         )
         return refinement_result.pages
+
+    # ------------------------------------------------------------------
+    # User LLM correction (optional, local)
+    # ------------------------------------------------------------------
+
+    def _correct_with_user_llm(
+        self,
+        all_pages: list[PageResult],
+        is_digital: bool,
+    ) -> list[PageResult]:
+        """Apply user's own LLM for text correction on extracted blocks."""
+        corrector = self.user_llm_corrector
+        if not corrector:
+            return all_pages
+
+        source_type = "digital_pdf" if is_digital else "image_pdf"
+
+        for page in all_pages:
+            for block in page.blocks:
+                if not block.text or not block.text.strip():
+                    continue
+                # Only correct text-bearing blocks
+                if block.block_type in (
+                    BlockType.PARAGRAPH, BlockType.HEADING,
+                    BlockType.LIST, BlockType.CAPTION,
+                    BlockType.FOOTNOTE,
+                ):
+                    try:
+                        corrected = corrector.correct_html(
+                            block.text, source_type=source_type,
+                        )
+                        if corrected and corrected.strip():
+                            block.text = corrected
+                    except Exception as exc:
+                        logger.warning(
+                            "User LLM correction failed for block %s: %s",
+                            block.id, exc,
+                        )
+
+        return all_pages
 
     # ------------------------------------------------------------------
     # Helpers

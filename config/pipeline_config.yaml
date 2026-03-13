@@ -51,6 +51,27 @@ models:
   ollama_base_url: "http://localhost:11434"
   gemini_api_key_env: "GEMINI_API_KEY"
 
+# User LLM Correction (optional, uses user's own API key)
+# If the user provides their own LLM API key in the app settings,
+# additional AI correction is applied locally on their machine.
+# Supported providers: gemini, openai, claude
+# Default models (latest fast models):
+#   gemini:  gemini-2.5-flash-lite
+#   openai:  gpt-4.1-mini
+#   claude:  claude-sonnet-4-5-20250514
+user_llm:
+  provider: ""    # Set by user in app settings (not here)
+  api_key: ""     # Set by user in app settings (not here)
+  model: ""       # Empty = use default for provider
+
+# R2 Object Storage (for hybrid image PDF upload)
+# Large image PDFs bypass Railway traffic by uploading directly to R2.
+# Set credentials in environment variables (see .env.example).
+r2:
+  bucket_name: moa-documents
+  upload_expiry_seconds: 3600
+  cleanup_after_hours: 24
+
 # Credit System
 credits:
   cost_markup: 2.2

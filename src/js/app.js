@@ -169,6 +169,7 @@ function setupEventListeners() {
 
   // Settings apply
   setupSettingsListeners();
+  setupLLMSettingsListeners();
 
   // Auth
   $("#btn-login")?.addEventListener("click", handleLogin);
@@ -198,6 +199,65 @@ function setupEventListeners() {
       await checkBackendHealth();
     } catch (e) {
       showStatus(`재시작 실패: ${e}`, "error");
+    }
+  });
+}
+
+function setupLLMSettingsListeners() {
+  const providerSelect = $("#set-llm-provider");
+  const keyGroup = $("#llm-key-group");
+  const modelGroup = $("#llm-model-group");
+  const saveGroup = $("#llm-save-group");
+  const statusEl = $("#llm-status");
+
+  if (!providerSelect) return;
+
+  // Load saved config
+  const saved = api.getUserLLMConfig();
+  if (saved.provider) {
+    providerSelect.value = saved.provider;
+    if (keyGroup) keyGroup.style.display = "block";
+    if (modelGroup) modelGroup.style.display = "block";
+    if (saveGroup) saveGroup.style.display = "block";
+    const keyInput = $("#set-llm-api-key");
+    const modelInput = $("#set-llm-model");
+    if (keyInput && saved.api_key) keyInput.value = saved.api_key;
+    if (modelInput && saved.model) modelInput.value = saved.model;
+  }
+
+  providerSelect.addEventListener("change", () => {
+    const hasProvider = !!providerSelect.value;
+    if (keyGroup) keyGroup.style.display = hasProvider ? "block" : "none";
+    if (modelGroup) modelGroup.style.display = hasProvider ? "block" : "none";
+    if (saveGroup) saveGroup.style.display = hasProvider ? "block" : "none";
+    if (!hasProvider) {
+      api.clearUserLLMConfig();
+      if (statusEl) statusEl.textContent = "AI 교정이 비활성화되었습니다.";
+    }
+  });
+
+  $("#btn-save-llm")?.addEventListener("click", () => {
+    const provider = providerSelect.value;
+    const apiKey = $("#set-llm-api-key")?.value?.trim() || "";
+    const model = $("#set-llm-model")?.value?.trim() || "";
+
+    if (provider && !apiKey) {
+      if (statusEl) {
+        statusEl.textContent = "API 키를 입력해주세요.";
+        statusEl.style.color = "#f44336";
+      }
+      return;
+    }
+
+    api.setUserLLMConfig({ provider, api_key: apiKey, model });
+    if (statusEl) {
+      const providerName = {
+        gemini: "Google Gemini",
+        openai: "OpenAI",
+        claude: "Anthropic Claude",
+      }[provider] || provider;
+      statusEl.textContent = `${providerName} AI 교정이 설정되었습니다.`;
+      statusEl.style.color = "#4caf50";
     }
   });
 }
@@ -248,13 +308,22 @@ function handleFileSelected(path) {
   const fileInfo = $("#file-info");
   if (fileInfo) {
     const icon = getFileIcon(ext);
-    const engine = api.isPdfFormat(ext) ? "Upstage + Gemini AI" : "한컴 DocsConverter";
+    let engine;
+    if (api.isPdfFormat(ext)) {
+      engine = "PDF 자동 감지 (디지털: PyMuPDF / 이미지: Upstage OCR)";
+    } else {
+      engine = "한컴 DocsConverter";
+    }
+    const llmConfig = api.getUserLLMConfig();
+    const llmLabel = llmConfig.provider
+      ? ` + ${llmConfig.provider.toUpperCase()} 교정`
+      : "";
     fileInfo.innerHTML = `
       <div class="file-card">
         <span class="file-icon">${icon}</span>
         <div class="file-details">
           <div class="file-name">${fileName}</div>
-          <div class="file-meta">${ext.toUpperCase()} · ${engine}</div>
+          <div class="file-meta">${ext.toUpperCase()} · ${engine}${llmLabel}</div>
         </div>
       </div>`;
   }
@@ -358,8 +427,6 @@ async function convertSingle() {
     }
   }
 
-  // Unified conversion - routes via convert_document command which
-  // handles backend availability check and Rust-native fallback for PDF
   const label = state.translate ? `${ext.toUpperCase()} 변환 + 번역 중...` : `${ext.toUpperCase()} 변환 중...`;
   updateProgress(30, label);
 
@@ -388,7 +455,6 @@ async function convertSingle() {
             state.targetLanguage
           );
         } else {
-          // Refresh failed – force re-login
           api.clearAuth();
           updateAuthUI();
           showLoginOverlay();
@@ -405,16 +471,16 @@ async function convertSingle() {
       const jobId = result.job_id;
       state.currentJobId = jobId;
 
-      const ws = await api.connectProgress(jobId, (data) => {
+      const ws = await api.connectProgress(jobId, async (data) => {
         if (data._wsClose) return;
         if (data.progress !== undefined) {
           updateProgress(data.progress * 100, data.message || "처리 중...");
         }
         if (data.status === "completed") {
-          updateProgress(100, "변환 완료!");
-          showStatus("변환 완료!", "success");
-          pollJobResult(jobId);
+          updateProgress(90, "변환 완료, AI 교정 확인 중...");
           cleanupWs();
+          // Apply optional LLM correction if user has configured it
+          await applyOptionalLLMCorrection(jobId, data);
         }
         if (data.status === "failed") {
           showStatus(`변환 실패: ${data.message}`, "error");
@@ -428,14 +494,129 @@ async function convertSingle() {
       }
     } else {
       // Direct result (Hancom or Rust-native)
+      // Apply optional LLM correction for direct results
+      result = await maybeApplyLLMCorrection(result, ext);
+
       const engine = result.engine === "hancom" ? "한컴 DocsConverter" : "네이티브";
-      const refined = result.gemini_refined ? " + AI 보정" : "";
+      const corrected = result.llm_corrected ? " + AI 교정" : "";
       updateProgress(100, "변환 완료!");
       showResults(result);
-      showStatus(`변환 완료! (${engine}${refined})`, "success");
+      showStatus(`변환 완료! (${engine}${corrected})`, "success");
     }
   } catch (e) {
     showStatus(`변환 실패: ${e}`, "error");
+  }
+}
+
+/**
+ * Apply optional LLM correction to conversion results.
+ * Only runs if the user has configured their own LLM API key in settings.
+ */
+async function maybeApplyLLMCorrection(result, ext) {
+  const llmConfig = api.getUserLLMConfig();
+  if (!llmConfig.provider || !llmConfig.api_key) {
+    return result; // No LLM configured, skip correction
+  }
+
+  if (!result.html) {
+    return result; // No HTML to correct
+  }
+
+  const sourceType = api.isPdfFormat(ext) ? "image_pdf" : "document";
+
+  try {
+    updateProgress(92, `${llmConfig.provider.toUpperCase()} AI 교정 중...`);
+    const corrected = await api.correctWithLLM(
+      result.html,
+      llmConfig.provider,
+      llmConfig.api_key,
+      llmConfig.model || "",
+      sourceType,
+    );
+
+    if (corrected.corrected && corrected.html) {
+      result.html = corrected.html;
+      result.llm_corrected = true;
+      result.llm_provider = corrected.provider;
+
+      // Re-save the corrected HTML if we have output files
+      if (result.output_files) {
+        const htmlFile = result.output_files.find((f) => /\.html?$/i.test(f));
+        if (htmlFile) {
+          try {
+            await api.writeFile(htmlFile, corrected.html);
+          } catch {
+            // File write may fail, continue
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("LLM correction failed:", e);
+    // Don't fail the whole conversion, just skip correction
+  }
+
+  return result;
+}
+
+/**
+ * Apply optional LLM correction after a job completes (WebSocket flow).
+ */
+async function applyOptionalLLMCorrection(jobId, data) {
+  try {
+    const status = await api.getJobStatus(jobId);
+    if (!status.result) {
+      updateProgress(100, "변환 완료!");
+      showStatus("변환 완료!", "success");
+      return;
+    }
+
+    // Check if LLM correction is configured
+    const llmConfig = api.getUserLLMConfig();
+    const hasLLM = llmConfig.provider && llmConfig.api_key;
+
+    if (hasLLM && status.result.output_files) {
+      const htmlFile = status.result.output_files.find((f) => /\.html?$/i.test(f));
+      if (htmlFile) {
+        try {
+          updateProgress(92, `${llmConfig.provider.toUpperCase()} AI 교정 중...`);
+          const htmlContent = await api.readFile(htmlFile);
+          if (htmlContent) {
+            const corrected = await api.correctWithLLM(
+              htmlContent,
+              llmConfig.provider,
+              llmConfig.api_key,
+              llmConfig.model || "",
+              "image_pdf",
+            );
+            if (corrected.corrected && corrected.html) {
+              await api.writeFile(htmlFile, corrected.html);
+              // Also update markdown file
+              const mdFile = status.result.output_files.find((f) => /\.md$/i.test(f));
+              if (mdFile) {
+                try {
+                  const md = await api.htmlToMarkdown(corrected.html);
+                  await api.writeFile(mdFile, md);
+                } catch { /* continue */ }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Post-job LLM correction failed:", e);
+        }
+      }
+    }
+
+    updateProgress(100, "변환 완료!");
+    showStatus(
+      hasLLM ? "변환 완료! (AI 교정 적용)" : "변환 완료!",
+      "success"
+    );
+    showResults(status.result);
+  } catch (e) {
+    updateProgress(100, "변환 완료!");
+    showStatus("변환 완료!", "success");
+    pollJobResult(jobId);
   }
 }
 
