@@ -34,12 +34,12 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": [
-      "../backend/**/*.py",
-      "../backend/**/*.txt",
-      "../config/**/*",
-      "../build_output/portable_python/**/*"
-    ],
+    "resources": {
+      "../backend/**/*.py": "backend/",
+      "../backend/**/*.txt": "backend/",
+      "../config/**/*": "config/",
+      "../build_output/portable_python/**/*": "portable_python/"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper",
