@@ -32,16 +32,14 @@ fn find_python(app: &AppHandle) -> PathBuf {
 
     let python_bin = if cfg!(windows) { "python.exe" } else { "bin/python3" };
 
-    // Tauri v2 maps "../" resource paths to "_up_/" in the bundle.
-    // So "../build_output/portable_python/**/*" becomes "_up_/build_output/portable_python/..."
+    // Resources are mapped to short paths via tauri.conf.json:
+    // "../build_output/portable_python/**/*" -> "portable_python/"
     let candidates = [
-        // 1. Tauri v2 bundled path (_up_/ prefix from ../ in tauri.conf.json resources)
-        resource_dir.join("_up_").join("build_output").join("portable_python").join(python_bin),
-        // 2. Direct path (in case resources are flattened)
+        // 1. Mapped resource path (portable_python/ directly under resource dir)
         resource_dir.join("portable_python").join(python_bin),
-        // 3. Under build_output/ without _up_
-        resource_dir.join("build_output").join("portable_python").join(python_bin),
-        // 4. Dev mode: project_root/build_output/portable_python/
+        // 2. Legacy: Tauri v2 _up_/ prefix (for backwards compatibility)
+        resource_dir.join("_up_").join("build_output").join("portable_python").join(python_bin),
+        // 3. Dev mode: project_root/build_output/portable_python/
         resource_dir.join("..").join("build_output").join("portable_python").join(python_bin),
     ];
 
@@ -63,12 +61,13 @@ fn find_python(app: &AppHandle) -> PathBuf {
 fn find_backend_dir(app: &AppHandle) -> PathBuf {
     let resource_dir = resolve_resource_dir(app);
 
-    // Tauri v2 maps "../backend/**/*.py" to "_up_/backend/..." in the bundle
+    // Resources are mapped to short paths via tauri.conf.json:
+    // "../backend/**/*.py" -> "backend/"
     let candidates = [
-        // 1. Tauri v2 bundled path (_up_/ prefix)
-        resource_dir.join("_up_"),
-        // 2. Direct resource dir (resources/backend/)
+        // 1. Mapped resource path (backend/ directly under resource dir)
         resource_dir.clone(),
+        // 2. Legacy: Tauri v2 _up_/ prefix
+        resource_dir.join("_up_"),
         // 3. Dev: project root (resource_dir/../)
         resource_dir.join(".."),
     ];
