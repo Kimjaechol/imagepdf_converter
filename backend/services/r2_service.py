@@ -136,7 +136,7 @@ class R2Service:
         timestamp = int(time.time())
         unique_id = uuid.uuid4().hex[:12]
         safe_filename = filename.replace("/", "_").replace("\\", "_")
-        object_key = f"uploads/{user_id}/{timestamp}_{unique_id}/{safe_filename}"
+        object_key = f"doc-converter/uploads/{user_id}/{timestamp}_{unique_id}/{safe_filename}"
 
         url = self.client.generate_presigned_url(
             "put_object",
@@ -239,7 +239,7 @@ class R2Service:
 
         Returns the number of objects deleted.
         """
-        prefix = f"uploads/{user_id}/"
+        prefix = f"doc-converter/uploads/{user_id}/"
         cutoff = time.time() - older_than_seconds
         deleted = 0
 
