@@ -215,7 +215,7 @@ class PageRenderer:
                 align = Alignment.LEFT
 
             # Estimate indentation: distance from typical left margin
-            indent_px = max(0.0, bbox.x0 - page_left_margin * self._zoom / (self._zoom if self._zoom != 0 else 1))
+            indent_px = max(0.0, bbox.x0 - page_left_margin)
             # Convert to approximate em units (1em ≈ font_size pixels)
             indent_em = round(indent_px / max(max_font_size * self._zoom, 1.0), 1) if indent_px > max_font_size * self._zoom * 0.5 else 0.0
 

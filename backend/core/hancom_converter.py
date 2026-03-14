@@ -27,6 +27,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Timeouts (defined early so they can be referenced by functions below)
+UPLOAD_TIMEOUT = 120  # seconds for file upload
+CONVERT_TIMEOUT = 300  # seconds for conversion
+
 # ---------------------------------------------------------------------------
 # Authenticated HTTP client (session with cookies)
 # ---------------------------------------------------------------------------
@@ -139,10 +143,6 @@ HANCOM_UPLOAD_PATH = os.environ.get("HANCOM_UPLOAD_PATH", "/upload")
 SOURCE_FILE_PATH_PREFIX = os.environ.get(
     "HANCOM_SOURCE_FILE_PREFIX", "/opt/hancom/upload"
 )
-
-# Timeouts
-UPLOAD_TIMEOUT = 120  # seconds for file upload
-CONVERT_TIMEOUT = 300  # seconds for conversion
 
 
 # ---------------------------------------------------------------------------

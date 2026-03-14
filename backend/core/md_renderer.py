@@ -260,3 +260,139 @@ class MarkdownRenderer:
         lines = block.text.strip().split("\n")
         quoted = "\n".join(f"> {line}" for line in lines)
         return f"> **Note:**\n{quoted}"
+
+
+# ---------------------------------------------------------------------------
+# Standalone HTML → Markdown converter (for Hancom/office document output)
+# ---------------------------------------------------------------------------
+
+def html_to_markdown(html: str) -> str:
+    """Convert an HTML string to Markdown.
+
+    This is a lightweight converter used for office document HTML output
+    (from Hancom DocsConverter). For structured PDF output, the
+    MarkdownRenderer class above is preferred.
+    """
+    if not html or not html.strip():
+        return ""
+
+    # Extract body content if full HTML document
+    body_start = html.find("<body")
+    body_end = html.rfind("</body>")
+    if body_start != -1 and body_end != -1:
+        body_close = html.find(">", body_start)
+        if body_close != -1:
+            html = html[body_close + 1:body_end]
+
+    from html.parser import HTMLParser
+
+    parts: list[str] = []
+    tag_stack: list[str] = []
+    in_pre = False
+    in_table = False
+    first_row_done = False
+    col_count = 0
+    row_col_count = 0
+
+    class MdParser(HTMLParser):
+        nonlocal in_pre, in_table, first_row_done, col_count, row_col_count
+
+        def handle_starttag(self, tag, attrs):
+            nonlocal in_pre, in_table, first_row_done, col_count, row_col_count
+            tag = tag.lower()
+            tag_stack.append(tag)
+
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                level = int(tag[1])
+                parts.append("\n" + "#" * level + " ")
+            elif tag == "p":
+                parts.append("\n")
+            elif tag == "br":
+                parts.append("\n")
+            elif tag in ("strong", "b"):
+                parts.append("**")
+            elif tag in ("em", "i"):
+                parts.append("*")
+            elif tag == "li":
+                parts.append("\n- ")
+            elif tag == "pre":
+                in_pre = True
+                parts.append("\n```\n")
+            elif tag == "code" and not in_pre:
+                parts.append("`")
+            elif tag == "table":
+                in_table = True
+                first_row_done = False
+                col_count = 0
+                parts.append("\n")
+            elif tag == "tr":
+                row_col_count = 0
+                parts.append("\n")
+            elif tag in ("td", "th"):
+                parts.append("| ")
+                row_col_count += 1
+            elif tag == "hr":
+                parts.append("\n---\n")
+            elif tag == "blockquote":
+                parts.append("\n> ")
+            elif tag == "img":
+                attrs_dict = dict(attrs)
+                src = attrs_dict.get("src", "")
+                alt = attrs_dict.get("alt", "image")
+                parts.append(f"![{alt}]({src})")
+
+        def handle_endtag(self, tag):
+            nonlocal in_pre, in_table, first_row_done, col_count, row_col_count
+            tag = tag.lower()
+            if tag_stack and tag_stack[-1] == tag:
+                tag_stack.pop()
+
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                parts.append("\n\n")
+            elif tag == "p":
+                parts.append("\n\n")
+            elif tag in ("strong", "b"):
+                parts.append("**")
+            elif tag in ("em", "i"):
+                parts.append("*")
+            elif tag == "pre":
+                in_pre = False
+                parts.append("\n```\n")
+            elif tag == "code" and not in_pre:
+                parts.append("`")
+            elif tag in ("td", "th"):
+                parts.append(" ")
+            elif tag == "tr":
+                parts.append("|")
+                if not first_row_done:
+                    col_count = row_col_count
+                    first_row_done = True
+                    parts.append("\n")
+                    parts.append("|".join(["---"] * col_count))
+                    if col_count > 0:
+                        parts.append("|")
+            elif tag == "table":
+                in_table = False
+                parts.append("\n")
+            elif tag == "blockquote":
+                parts.append("\n")
+
+        def handle_data(self, data):
+            if in_pre:
+                parts.append(data)
+            else:
+                parts.append(data)
+
+    try:
+        parser = MdParser()
+        parser.feed(html)
+    except Exception:
+        # Fallback: strip tags
+        result = re.sub(r"<[^>]+>", "", html)
+        return result.strip()
+
+    result = "".join(parts)
+    # Collapse excessive newlines
+    while "\n\n\n" in result:
+        result = result.replace("\n\n\n", "\n\n")
+    return result.strip()

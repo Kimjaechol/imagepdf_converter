@@ -22,9 +22,16 @@ import time
 import uuid
 from dataclasses import dataclass
 
-import boto3
-from botocore.config import Config as BotoConfig
-from botocore.exceptions import ClientError
+try:
+    import boto3
+    from botocore.config import Config as BotoConfig
+    from botocore.exceptions import ClientError
+    _HAS_BOTO3 = True
+except ImportError:
+    boto3 = None  # type: ignore[assignment]
+    BotoConfig = None  # type: ignore[assignment,misc]
+    ClientError = Exception  # type: ignore[assignment,misc]
+    _HAS_BOTO3 = False
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +87,10 @@ class R2Service:
     def client(self):
         """Lazy-initialized boto3 S3 client for R2."""
         if self._client is None:
+            if not _HAS_BOTO3:
+                raise RuntimeError(
+                    "boto3 is not installed. Install it with: pip install boto3"
+                )
             if not self.config.is_configured:
                 raise RuntimeError(
                     "R2 not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, "
