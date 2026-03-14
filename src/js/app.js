@@ -169,6 +169,7 @@ function setupEventListeners() {
 
   // Settings apply
   setupSettingsListeners();
+  setupLLMSettingsListeners();
 
   // Auth
   $("#btn-login")?.addEventListener("click", handleLogin);
@@ -198,6 +199,65 @@ function setupEventListeners() {
       await checkBackendHealth();
     } catch (e) {
       showStatus(`재시작 실패: ${e}`, "error");
+    }
+  });
+}
+
+function setupLLMSettingsListeners() {
+  const providerSelect = $("#set-llm-provider");
+  const keyGroup = $("#llm-key-group");
+  const modelGroup = $("#llm-model-group");
+  const saveGroup = $("#llm-save-group");
+  const statusEl = $("#llm-status");
+
+  if (!providerSelect) return;
+
+  // Load saved config
+  const saved = api.getUserLLMConfig();
+  if (saved.provider) {
+    providerSelect.value = saved.provider;
+    if (keyGroup) keyGroup.style.display = "block";
+    if (modelGroup) modelGroup.style.display = "block";
+    if (saveGroup) saveGroup.style.display = "block";
+    const keyInput = $("#set-llm-api-key");
+    const modelInput = $("#set-llm-model");
+    if (keyInput && saved.api_key) keyInput.value = saved.api_key;
+    if (modelInput && saved.model) modelInput.value = saved.model;
+  }
+
+  providerSelect.addEventListener("change", () => {
+    const hasProvider = !!providerSelect.value;
+    if (keyGroup) keyGroup.style.display = hasProvider ? "block" : "none";
+    if (modelGroup) modelGroup.style.display = hasProvider ? "block" : "none";
+    if (saveGroup) saveGroup.style.display = hasProvider ? "block" : "none";
+    if (!hasProvider) {
+      api.clearUserLLMConfig();
+      if (statusEl) statusEl.textContent = "AI 교정이 비활성화되었습니다.";
+    }
+  });
+
+  $("#btn-save-llm")?.addEventListener("click", () => {
+    const provider = providerSelect.value;
+    const apiKey = $("#set-llm-api-key")?.value?.trim() || "";
+    const model = $("#set-llm-model")?.value?.trim() || "";
+
+    if (provider && !apiKey) {
+      if (statusEl) {
+        statusEl.textContent = "API 키를 입력해주세요.";
+        statusEl.style.color = "#f44336";
+      }
+      return;
+    }
+
+    api.setUserLLMConfig({ provider, api_key: apiKey, model });
+    if (statusEl) {
+      const providerName = {
+        gemini: "Google Gemini",
+        openai: "OpenAI",
+        claude: "Anthropic Claude",
+      }[provider] || provider;
+      statusEl.textContent = `${providerName} AI 교정이 설정되었습니다.`;
+      statusEl.style.color = "#4caf50";
     }
   });
 }
@@ -248,13 +308,22 @@ function handleFileSelected(path) {
   const fileInfo = $("#file-info");
   if (fileInfo) {
     const icon = getFileIcon(ext);
-    const engine = api.isPdfFormat(ext) ? "Upstage + Gemini AI" : "한컴 DocsConverter";
+    let engine;
+    if (api.isPdfFormat(ext)) {
+      engine = "PDF 자동 감지 (디지털: PyMuPDF / 이미지: Upstage OCR)";
+    } else {
+      engine = "한컴 DocsConverter";
+    }
+    const llmConfig = api.getUserLLMConfig();
+    const llmLabel = llmConfig.provider
+      ? ` + ${llmConfig.provider.toUpperCase()} 교정`
+      : "";
     fileInfo.innerHTML = `
       <div class="file-card">
         <span class="file-icon">${icon}</span>
         <div class="file-details">
           <div class="file-name">${fileName}</div>
-          <div class="file-meta">${ext.toUpperCase()} · ${engine}</div>
+          <div class="file-meta">${ext.toUpperCase()} · ${engine}${llmLabel}</div>
         </div>
       </div>`;
   }
@@ -358,8 +427,6 @@ async function convertSingle() {
     }
   }
 
-  // Unified conversion - routes via convert_document command which
-  // handles backend availability check and Rust-native fallback for PDF
   const label = state.translate ? `${ext.toUpperCase()} 변환 + 번역 중...` : `${ext.toUpperCase()} 변환 중...`;
   updateProgress(30, label);
 
@@ -388,7 +455,6 @@ async function convertSingle() {
             state.targetLanguage
           );
         } else {
-          // Refresh failed – force re-login
           api.clearAuth();
           updateAuthUI();
           showLoginOverlay();
@@ -405,16 +471,16 @@ async function convertSingle() {
       const jobId = result.job_id;
       state.currentJobId = jobId;
 
-      const ws = await api.connectProgress(jobId, (data) => {
+      const ws = await api.connectProgress(jobId, async (data) => {
         if (data._wsClose) return;
         if (data.progress !== undefined) {
           updateProgress(data.progress * 100, data.message || "처리 중...");
         }
         if (data.status === "completed") {
-          updateProgress(100, "변환 완료!");
-          showStatus("변환 완료!", "success");
-          pollJobResult(jobId);
+          updateProgress(90, "변환 완료, AI 교정 확인 중...");
           cleanupWs();
+          // Apply optional LLM correction if user has configured it
+          await applyOptionalLLMCorrection(jobId, data);
         }
         if (data.status === "failed") {
           showStatus(`변환 실패: ${data.message}`, "error");
@@ -428,14 +494,129 @@ async function convertSingle() {
       }
     } else {
       // Direct result (Hancom or Rust-native)
+      // Apply optional LLM correction for direct results
+      result = await maybeApplyLLMCorrection(result, ext);
+
       const engine = result.engine === "hancom" ? "한컴 DocsConverter" : "네이티브";
-      const refined = result.gemini_refined ? " + AI 보정" : "";
+      const corrected = result.llm_corrected ? " + AI 교정" : "";
       updateProgress(100, "변환 완료!");
       showResults(result);
-      showStatus(`변환 완료! (${engine}${refined})`, "success");
+      showStatus(`변환 완료! (${engine}${corrected})`, "success");
     }
   } catch (e) {
     showStatus(`변환 실패: ${e}`, "error");
+  }
+}
+
+/**
+ * Apply optional LLM correction to conversion results.
+ * Only runs if the user has configured their own LLM API key in settings.
+ */
+async function maybeApplyLLMCorrection(result, ext) {
+  const llmConfig = api.getUserLLMConfig();
+  if (!llmConfig.provider || !llmConfig.api_key) {
+    return result; // No LLM configured, skip correction
+  }
+
+  if (!result.html) {
+    return result; // No HTML to correct
+  }
+
+  const sourceType = api.isPdfFormat(ext) ? "image_pdf" : "document";
+
+  try {
+    updateProgress(92, `${llmConfig.provider.toUpperCase()} AI 교정 중...`);
+    const corrected = await api.correctWithLLM(
+      result.html,
+      llmConfig.provider,
+      llmConfig.api_key,
+      llmConfig.model || "",
+      sourceType,
+    );
+
+    if (corrected.corrected && corrected.html) {
+      result.html = corrected.html;
+      result.llm_corrected = true;
+      result.llm_provider = corrected.provider;
+
+      // Re-save the corrected HTML if we have output files
+      if (result.output_files) {
+        const htmlFile = result.output_files.find((f) => /\.html?$/i.test(f));
+        if (htmlFile) {
+          try {
+            await api.writeFile(htmlFile, corrected.html);
+          } catch {
+            // File write may fail, continue
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("LLM correction failed:", e);
+    showStatus("AI 교정을 건너뛰었습니다 (오류: " + e + ")", "warning");
+  }
+
+  return result;
+}
+
+/**
+ * Apply optional LLM correction after a job completes (WebSocket flow).
+ */
+async function applyOptionalLLMCorrection(jobId, data) {
+  try {
+    const status = await api.getJobStatus(jobId);
+    if (!status.result) {
+      updateProgress(100, "변환 완료!");
+      showStatus("변환 완료!", "success");
+      return;
+    }
+
+    // Check if LLM correction is configured
+    const llmConfig = api.getUserLLMConfig();
+    const hasLLM = llmConfig.provider && llmConfig.api_key;
+
+    if (hasLLM && status.result.output_files) {
+      const htmlFile = status.result.output_files.find((f) => /\.html?$/i.test(f));
+      if (htmlFile) {
+        try {
+          updateProgress(92, `${llmConfig.provider.toUpperCase()} AI 교정 중...`);
+          const htmlContent = await api.readFile(htmlFile);
+          if (htmlContent) {
+            const corrected = await api.correctWithLLM(
+              htmlContent,
+              llmConfig.provider,
+              llmConfig.api_key,
+              llmConfig.model || "",
+              "image_pdf",
+            );
+            if (corrected.corrected && corrected.html) {
+              await api.writeFile(htmlFile, corrected.html);
+              // Also update markdown file
+              const mdFile = status.result.output_files.find((f) => /\.md$/i.test(f));
+              if (mdFile) {
+                try {
+                  const md = await api.htmlToMarkdown(corrected.html);
+                  await api.writeFile(mdFile, md);
+                } catch { /* continue */ }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Post-job LLM correction failed:", e);
+        }
+      }
+    }
+
+    updateProgress(100, "변환 완료!");
+    showStatus(
+      hasLLM ? "변환 완료! (AI 교정 적용)" : "변환 완료!",
+      "success"
+    );
+    showResults(status.result);
+  } catch (e) {
+    updateProgress(100, "변환 완료!");
+    showStatus("변환 완료!", "success");
+    pollJobResult(jobId);
   }
 }
 
@@ -470,9 +651,12 @@ async function convertBatch() {
 }
 
 async function pollJobProgress(jobId) {
+  let errorCount = 0;
+  const maxErrors = 15;
   const poll = async () => {
     try {
       const status = await api.getJobStatus(jobId);
+      errorCount = 0; // reset on success
       updateProgress(status.progress * 100, status.message);
       if (status.status === "completed") {
         updateProgress(100, "완료!");
@@ -486,7 +670,14 @@ async function pollJobProgress(jobId) {
       }
       setTimeout(poll, 1000);
     } catch {
-      setTimeout(poll, 2000);
+      errorCount++;
+      if (errorCount >= maxErrors) {
+        showStatus("서버 연결 실패: 진행 상태를 확인할 수 없습니다.", "error");
+        return;
+      }
+      // Exponential backoff: 2s, 4s, 8s... capped at 10s
+      const delay = Math.min(2000 * Math.pow(2, errorCount - 1), 10000);
+      setTimeout(poll, delay);
     }
   };
   poll();
@@ -575,26 +766,36 @@ async function showResults(result) {
       const filePath = item.dataset.path;
       const ext = filePath.split(".").pop().toLowerCase();
       if (ext === "html" || ext === "htm") {
-        // Open HTML files in the built-in editor
-        try {
-          await api.openEditorWindow(filePath);
-        } catch (e) {
-          // Fallback to system open
-          api.openFile(filePath);
-        }
+        // Open HTML files in the 2-layer editor (with viewer + md paths)
+        openEditorWithResult(result, filePath);
       } else {
         api.openFile(filePath);
       }
     });
   });
 
-  // Auto-open the first HTML file in the editor after conversion
-  const firstHtml = files.find((f) => /\.html?$/i.test(f));
-  if (firstHtml) {
+  // Auto-open the editor after conversion with all file paths
+  const htmlFile = result?.html_file || files.find((f) => /\.html?$/i.test(f) && !f.includes("viewer"));
+  if (htmlFile) {
+    openEditorWithResult(result, htmlFile);
+  }
+}
+
+/**
+ * Open the 2-layer editor with viewer, content HTML, and markdown paths.
+ */
+async function openEditorWithResult(result, htmlFile) {
+  try {
+    const viewerFile = result?.viewer_file || null;
+    const mdFile = result?.md_file || null;
+    await api.openEditorWindow(htmlFile, viewerFile, mdFile);
+  } catch (e) {
+    console.warn("Auto-open editor failed:", e);
+    // Fallback to simple open
     try {
-      await api.openEditorWindow(firstHtml);
-    } catch (e) {
-      console.warn("Auto-open editor failed:", e);
+      await api.openEditorWindow(htmlFile);
+    } catch {
+      api.openFile(htmlFile);
     }
   }
 }
@@ -899,7 +1100,10 @@ async function handlePurchaseCredit() {
 async function handleEstimateCost() {
   const pages = parseInt($("#estimate-pages")?.value || "0", 10);
   const docType = $("#estimate-doc-type")?.value || "image_pdf";
-  if (pages <= 0) return;
+  if (pages <= 0) {
+    showSettingsStatus("페이지 수는 1 이상이어야 합니다", "warning");
+    return;
+  }
   try {
     const est = await api.estimateCost(pages, docType);
     const el = $("#cost-estimate-result");
@@ -948,16 +1152,17 @@ async function showCreditExhaustedPopup() {
 
   overlay.innerHTML = `
     <div style="
-      background: white; border-radius: 12px; padding: 32px; max-width: 420px;
+      background: var(--bg-primary, white); border-radius: 12px; padding: 32px; max-width: 420px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.3); text-align: center;
+      color: var(--text-primary, #333);
     ">
       <div style="font-size: 48px; margin-bottom: 16px;">&#x1F4B3;</div>
-      <h3 style="margin: 0 0 12px 0; color: #333; font-size: 18px;">
+      <h3 style="margin: 0 0 12px 0; color: var(--text-primary, #333); font-size: 18px;">
         무료 크레딧이 모두 소진되었습니다
       </h3>
-      <p style="color: #666; margin: 0 0 20px 0; line-height: 1.6;">
+      <p style="color: var(--text-secondary, #666); margin: 0 0 20px 0; line-height: 1.6;">
         PDF 문서 변환을 계속하려면 크레딧을 충전해 주세요.<br>
-        <span style="font-size: 13px; color: #999;">
+        <span style="font-size: 13px; color: var(--text-muted, #999);">
           이미지 PDF: $0.02/페이지 (\u20A9${imgPdfKrw}) &middot; 디지털 PDF: $0.005/페이지 (\u20A9${digPdfKrw})<br>
           기타 문서 (DOCX, HWPX 등): 무료
         </span>
@@ -968,7 +1173,7 @@ async function showCreditExhaustedPopup() {
           border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;
         ">크레딧 충전하기</button>
         <button id="credit-popup-close" style="
-          background: #eee; color: #666; border: none; padding: 10px 24px;
+          background: var(--bg-secondary, #eee); color: var(--text-secondary, #666); border: none; padding: 10px 24px;
           border-radius: 6px; cursor: pointer; font-size: 14px;
         ">닫기</button>
       </div>

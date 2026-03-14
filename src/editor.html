@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HTML 에디터 - MoA 문서 변환기</title>
+  <title>문서 편집기 - MoA 문서 변환기</title>
   <link rel="stylesheet" href="styles/editor.css">
 </head>
 <body>
@@ -11,230 +11,421 @@
 <!-- Toolbar -->
 <div class="toolbar">
   <div class="toolbar-group">
+    <button class="tool-btn action-btn" id="btn-open" title="파일 열기">열기</button>
+    <button class="tool-btn action-btn" id="btn-save" title="저장 (Ctrl+S)">저장</button>
+    <button class="tool-btn action-btn" id="btn-save-md" title="Markdown으로 저장">MD 저장</button>
+  </div>
+  <div class="toolbar-sep"></div>
+
+  <!-- Editor formatting toolbar (hidden until editor is active) -->
+  <div class="toolbar-group editor-toolbar" id="editor-toolbar" style="display:none">
     <button class="tool-btn" data-cmd="bold" title="굵게 (Ctrl+B)"><b>B</b></button>
     <button class="tool-btn" data-cmd="italic" title="기울임 (Ctrl+I)"><i>I</i></button>
     <button class="tool-btn" data-cmd="underline" title="밑줄 (Ctrl+U)"><u>U</u></button>
-  </div>
-  <div class="toolbar-sep"></div>
-  <div class="toolbar-group">
+    <div class="toolbar-sep-sm"></div>
     <button class="tool-btn" data-cmd="h1" title="제목 1">H1</button>
     <button class="tool-btn" data-cmd="h2" title="제목 2">H2</button>
     <button class="tool-btn" data-cmd="h3" title="제목 3">H3</button>
-  </div>
-  <div class="toolbar-sep"></div>
-  <div class="toolbar-group">
-    <button class="tool-btn" data-cmd="ul" title="목록">&#x2022;</button>
-    <button class="tool-btn" data-cmd="ol" title="번호 목록">1.</button>
-    <button class="tool-btn" data-cmd="quote" title="인용">&#x201C;</button>
+    <div class="toolbar-sep-sm"></div>
+    <button class="tool-btn" data-cmd="bulletList" title="목록">&#x2022;</button>
+    <button class="tool-btn" data-cmd="orderedList" title="번호 목록">1.</button>
+    <button class="tool-btn" data-cmd="blockquote" title="인용">&#x201C;</button>
     <button class="tool-btn" data-cmd="table" title="표 삽입">&#x25A6;</button>
+    <div class="toolbar-sep-sm"></div>
+    <button class="tool-btn" data-cmd="alignLeft" title="왼쪽 정렬">&#x2190;</button>
+    <button class="tool-btn" data-cmd="alignCenter" title="가운데 정렬">&#x2194;</button>
+    <button class="tool-btn" data-cmd="alignRight" title="오른쪽 정렬">&#x2192;</button>
+    <div class="toolbar-sep-sm"></div>
+    <button class="tool-btn" data-cmd="undo" title="되돌리기 (Ctrl+Z)">&#x21B6;</button>
+    <button class="tool-btn" data-cmd="redo" title="다시 실행 (Ctrl+Y)">&#x21B7;</button>
   </div>
-  <div class="toolbar-sep"></div>
-  <div class="toolbar-group toolbar-actions">
-    <button class="tool-btn action-btn" id="btn-open">열기</button>
-    <button class="tool-btn action-btn" id="btn-save">저장</button>
-    <button class="tool-btn action-btn" id="btn-save-md" title="Markdown으로 저장">MD 저장</button>
+
+  <div class="toolbar-actions">
+    <button class="tool-btn edit-toggle-btn" id="btn-toggle-editor" title="수정하기">
+      <span id="edit-icon">&#x270E;</span> <span id="edit-label">수정하기</span>
+    </button>
     <select id="view-mode" class="view-select">
-      <option value="split">분할 보기</option>
-      <option value="edit">편집만</option>
-      <option value="preview">미리보기</option>
+      <option value="viewer-only">뷰어만</option>
+      <option value="split" selected>분할 보기</option>
+      <option value="source">HTML 소스</option>
     </select>
   </div>
 </div>
 
-<!-- Editor Area -->
+<!-- Main Content Area -->
 <div class="editor-container" id="editor-container">
-  <div class="editor-pane" id="edit-pane">
-    <div class="pane-header">HTML 소스</div>
+  <!-- Left: Viewer (original layout, read-only) -->
+  <div class="viewer-pane" id="viewer-pane">
+    <div class="pane-header">
+      <span class="pane-label">원본 미리보기</span>
+      <span class="pane-badge" id="viewer-badge">뷰어</span>
+    </div>
+    <iframe id="viewer-frame" sandbox="allow-same-origin allow-scripts"></iframe>
+  </div>
+
+  <!-- Resizable Divider -->
+  <div class="divider" id="divider" style="display:none"></div>
+
+  <!-- Right: Tiptap Editor (hidden initially) -->
+  <div class="editor-pane" id="edit-pane" style="display:none">
+    <div class="pane-header">
+      <span class="pane-label">편집기</span>
+      <span class="pane-badge editor-badge">Tiptap</span>
+    </div>
+    <div id="tiptap-editor" class="tiptap-editor-area"></div>
+  </div>
+
+  <!-- HTML Source Pane (hidden, for source view mode) -->
+  <div class="source-pane" id="source-pane" style="display:none">
+    <div class="pane-header">
+      <span class="pane-label">HTML 소스</span>
+    </div>
     <textarea id="source-editor" spellcheck="false" placeholder="HTML 소스를 입력하거나 파일을 열어주세요..."></textarea>
   </div>
-  <div class="divider" id="divider"></div>
-  <div class="preview-pane" id="preview-pane">
-    <div class="pane-header">미리보기</div>
-    <iframe id="preview-frame" sandbox="allow-same-origin"></iframe>
-  </div>
+</div>
+
+<!-- Status Bar -->
+<div class="status-bar" id="status-bar">
+  <span id="status-text">준비</span>
+  <span id="status-file"></span>
 </div>
 
 <script type="module">
   import * as api from './js/api.js';
 
-  const editor = document.getElementById('source-editor');
-  const preview = document.getElementById('preview-frame');
-  let currentFilePath = null;
-  let debounceTimer = null;
+  // Dynamically import the Tiptap bundle
+  let tiptapModule = null;
+  let editor = null;
 
-  // ─── Load file from URL params
-  const params = new URLSearchParams(window.location.search);
-  const filePath = params.get('file');
-  if (filePath) {
-    loadFile(filePath);
+  async function loadTiptap() {
+    if (!tiptapModule) {
+      tiptapModule = await import('./js/tiptap.bundle.js');
+    }
+    return tiptapModule;
   }
 
-  async function loadFile(path) {
+  // ─── State ────────────────────────────────────────────
+  let currentFilePath = null;      // Path to the editable HTML (content HTML)
+  let viewerFilePath = null;       // Path to the viewer HTML (read-only)
+  let markdownFilePath = null;     // Path to the markdown file
+  let editorActive = false;
+  let originalHtml = '';           // Original HTML content for editor
+  let debounceTimer = null;
+
+  // ─── DOM refs ─────────────────────────────────────────
+  const viewerFrame = document.getElementById('viewer-frame');
+  const viewerPane = document.getElementById('viewer-pane');
+  const editPane = document.getElementById('edit-pane');
+  const sourcePane = document.getElementById('source-pane');
+  const sourceEditor = document.getElementById('source-editor');
+  const divider = document.getElementById('divider');
+  const editorToolbar = document.getElementById('editor-toolbar');
+  const viewModeSelect = document.getElementById('view-mode');
+  const statusText = document.getElementById('status-text');
+  const statusFile = document.getElementById('status-file');
+  const tiptapContainer = document.getElementById('tiptap-editor');
+
+  // ─── Load file from URL params ────────────────────────
+  const params = new URLSearchParams(window.location.search);
+  const fileParam = params.get('file');
+  const viewerParam = params.get('viewer');
+  const mdParam = params.get('md');
+
+  if (fileParam) {
+    const decodedFile = decodeURIComponent(fileParam);
+    currentFilePath = decodedFile;
+    loadContentFile(decodedFile);
+  }
+  if (viewerParam) {
+    const decodedViewer = decodeURIComponent(viewerParam);
+    viewerFilePath = decodedViewer;
+    loadViewerFile(decodedViewer);
+  } else if (fileParam) {
+    // If no separate viewer, use the same content file for viewer
+    const decodedFile = decodeURIComponent(fileParam);
+    loadViewerFile(decodedFile);
+  }
+  if (mdParam) {
+    markdownFilePath = decodeURIComponent(mdParam);
+  }
+
+  // ─── File Loading ─────────────────────────────────────
+  async function loadContentFile(path) {
     try {
-      const decodedPath = decodeURIComponent(path);
-      const content = await api.readFile(decodedPath);
-      if (content) {
-        editor.value = content;
-        currentFilePath = decodedPath;
-        updatePreview();
-        document.title = `${decodedPath.split(/[\\/]/).pop()} - HTML 에디터`;
-      } else {
-        editor.value = `<!-- 파일 내용이 비어 있습니다: ${decodedPath} -->`;
-        updatePreview();
+      const content = await api.readFile(path);
+      originalHtml = content || '';
+      currentFilePath = path;
+
+      // Update source editor
+      sourceEditor.value = originalHtml;
+
+      // If Tiptap editor is active, update it
+      if (editor && editorActive) {
+        tiptapModule.setEditorContent(editor, originalHtml);
       }
-    } catch (e) {
-      console.error('Failed to load file:', e);
+
       const fileName = path.split(/[\\/]/).pop();
-      editor.value = `<!-- 파일을 열 수 없습니다: ${fileName}\n     오류: ${e}\n     경로: ${path} -->`;
-      editor.style.color = '#c00';
-      updatePreview();
+      document.title = `${fileName} - 문서 편집기`;
+      statusFile.textContent = fileName;
+      setStatus('파일 로드 완료');
+    } catch (e) {
+      console.error('Failed to load content file:', e);
+      setStatus(`파일 로드 실패: ${e}`);
     }
   }
 
-  // ─── Preview update
-  function updatePreview() {
-    const content = editor.value;
-    preview.srcdoc = content;
+  async function loadViewerFile(path) {
+    try {
+      const content = await api.readFile(path);
+      if (content) {
+        viewerFrame.srcdoc = content;
+        viewerFilePath = path;
+      }
+    } catch (e) {
+      console.error('Failed to load viewer file:', e);
+      // Fallback: show content in viewer
+      if (originalHtml) {
+        viewerFrame.srcdoc = originalHtml;
+      }
+    }
   }
 
-  editor.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(updatePreview, 300);
+  // ─── Editor Toggle ────────────────────────────────────
+  document.getElementById('btn-toggle-editor').addEventListener('click', async () => {
+    if (!editorActive) {
+      await activateEditor();
+    } else {
+      deactivateEditor();
+    }
   });
 
-  // ─── Toolbar commands
-  document.querySelectorAll('.tool-btn[data-cmd]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const cmd = btn.dataset.cmd;
-      const start = editor.selectionStart;
-      const end = editor.selectionEnd;
-      const selected = editor.value.substring(start, end);
+  async function activateEditor() {
+    setStatus('편집기 로드 중...');
+    try {
+      const mod = await loadTiptap();
 
-      let replacement = '';
-      switch (cmd) {
-        case 'bold': replacement = `<strong>${selected || '텍스트'}</strong>`; break;
-        case 'italic': replacement = `<em>${selected || '텍스트'}</em>`; break;
-        case 'underline': replacement = `<u>${selected || '텍스트'}</u>`; break;
-        case 'h1': replacement = `<h1>${selected || '제목'}</h1>`; break;
-        case 'h2': replacement = `<h2>${selected || '제목'}</h2>`; break;
-        case 'h3': replacement = `<h3>${selected || '제목'}</h3>`; break;
-        case 'ul': replacement = `<ul>\n  <li>${selected || '항목'}</li>\n</ul>`; break;
-        case 'ol': replacement = `<ol>\n  <li>${selected || '항목'}</li>\n</ol>`; break;
-        case 'quote': replacement = `<blockquote>${selected || '인용문'}</blockquote>`; break;
-        case 'table':
-          replacement = `<table>\n  <tr><th>열 1</th><th>열 2</th></tr>\n  <tr><td>데이터</td><td>데이터</td></tr>\n</table>`;
-          break;
+      // Use latest source content (user may have edited in source view)
+      const contentToLoad = sourceEditor.value || originalHtml;
+
+      if (!editor) {
+        editor = mod.createMoaEditor(tiptapContainer, {
+          content: contentToLoad,
+          onUpdate: ({ editor: ed }) => {
+            // Sync source editor on update (debounced)
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              sourceEditor.value = mod.getEditorHtml(ed);
+            }, 500);
+          },
+        });
+      } else {
+        mod.setEditorContent(editor, contentToLoad);
       }
 
-      editor.value = editor.value.substring(0, start) + replacement + editor.value.substring(end);
-      editor.focus();
-      updatePreview();
+      editorActive = true;
+      editPane.style.display = 'flex';
+      divider.style.display = 'block';
+      editorToolbar.style.display = 'flex';
+
+      document.getElementById('edit-label').textContent = '편집 닫기';
+      document.getElementById('edit-icon').textContent = '\u2716';
+
+      // Update view mode to split
+      viewModeSelect.value = 'split';
+      applyViewMode('split');
+
+      setStatus('편집기 활성화됨');
+    } catch (e) {
+      console.error('Failed to activate editor:', e);
+      setStatus(`편집기 로드 실패: ${e}`);
+    }
+  }
+
+  function deactivateEditor() {
+    editorActive = false;
+    editPane.style.display = 'none';
+    divider.style.display = 'none';
+    editorToolbar.style.display = 'none';
+
+    document.getElementById('edit-label').textContent = '수정하기';
+    document.getElementById('edit-icon').textContent = '\u270E';
+
+    viewModeSelect.value = 'viewer-only';
+    applyViewMode('viewer-only');
+
+    setStatus('뷰어 모드');
+  }
+
+  // ─── Toolbar Commands (Tiptap) ────────────────────────
+  document.querySelectorAll('#editor-toolbar .tool-btn[data-cmd]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!editor) return;
+
+      const cmd = btn.dataset.cmd;
+      const chain = editor.chain().focus();
+
+      switch (cmd) {
+        case 'bold': chain.toggleBold().run(); break;
+        case 'italic': chain.toggleItalic().run(); break;
+        case 'underline': chain.toggleUnderline().run(); break;
+        case 'h1': chain.toggleHeading({ level: 1 }).run(); break;
+        case 'h2': chain.toggleHeading({ level: 2 }).run(); break;
+        case 'h3': chain.toggleHeading({ level: 3 }).run(); break;
+        case 'bulletList': chain.toggleBulletList().run(); break;
+        case 'orderedList': chain.toggleOrderedList().run(); break;
+        case 'blockquote': chain.toggleBlockquote().run(); break;
+        case 'table':
+          chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+          break;
+        case 'alignLeft': chain.setTextAlign('left').run(); break;
+        case 'alignCenter': chain.setTextAlign('center').run(); break;
+        case 'alignRight': chain.setTextAlign('right').run(); break;
+        case 'undo': chain.undo().run(); break;
+        case 'redo': chain.redo().run(); break;
+      }
     });
   });
 
-  // ─── Open / Save
-  document.getElementById('btn-open').addEventListener('click', async () => {
-    const path = await api.selectHtmlFile();
-    if (path) loadFile(path);
+  // ─── View Mode ────────────────────────────────────────
+  viewModeSelect.addEventListener('change', (e) => {
+    applyViewMode(e.target.value);
   });
 
-  // Auto-save corresponding markdown file when HTML is saved
-  async function autoSaveMarkdown(htmlContent, htmlPath) {
-    try {
-      const md = await api.htmlToMarkdown(htmlContent);
-      // Replace .html/.htm extension with .md
-      const mdPath = htmlPath.replace(/\.html?$/i, '.md');
-      await api.writeFile(mdPath, md);
-      console.log('Markdown auto-saved:', mdPath);
-    } catch (e) {
-      console.warn('Markdown auto-save failed:', e);
+  function applyViewMode(mode) {
+    switch (mode) {
+      case 'viewer-only':
+        // Sync source edits to Tiptap before hiding
+        if (editor && editorActive && tiptapModule && sourceEditor.value) {
+          const currentTiptapHtml = tiptapModule.getEditorHtml(editor);
+          if (sourceEditor.value !== currentTiptapHtml) {
+            tiptapModule.setEditorContent(editor, sourceEditor.value);
+          }
+        }
+        viewerPane.style.display = 'flex';
+        editPane.style.display = 'none';
+        sourcePane.style.display = 'none';
+        divider.style.display = 'none';
+        break;
+      case 'split':
+        viewerPane.style.display = 'flex';
+        if (editorActive) {
+          editPane.style.display = 'flex';
+          divider.style.display = 'block';
+          // Sync source edits back to Tiptap when switching from source view
+          if (editor && tiptapModule && sourceEditor.value) {
+            const currentTiptapHtml = tiptapModule.getEditorHtml(editor);
+            if (sourceEditor.value !== currentTiptapHtml) {
+              tiptapModule.setEditorContent(editor, sourceEditor.value);
+            }
+          }
+        }
+        sourcePane.style.display = 'none';
+        break;
+      case 'source':
+        viewerPane.style.display = 'none';
+        editPane.style.display = 'none';
+        divider.style.display = 'none';
+        sourcePane.style.display = 'flex';
+        // Sync source with current editor content
+        if (editor && editorActive && tiptapModule) {
+          sourceEditor.value = tiptapModule.getEditorHtml(editor);
+        }
+        break;
     }
   }
 
-  document.getElementById('btn-save').addEventListener('click', async () => {
-    try {
-      if (currentFilePath) {
-        await api.writeFile(currentFilePath, editor.value);
-        // Auto-save markdown alongside HTML
-        await autoSaveMarkdown(editor.value, currentFilePath);
-        document.title = `${currentFilePath.split(/[\\/]/).pop()} - 저장됨`;
-      } else {
-        const path = await api.saveFileDialog('output.html');
-        if (path) {
-          await api.writeFile(path, editor.value);
-          currentFilePath = path;
-          // Auto-save markdown alongside HTML
-          await autoSaveMarkdown(editor.value, path);
-          document.title = `${path.split(/[\\/]/).pop()} - HTML 에디터`;
-        }
-      }
-    } catch (e) {
-      console.error('Save failed:', e);
-      alert(`저장 실패: ${e}`);
-    }
+  // ─── Open / Save ──────────────────────────────────────
+  document.getElementById('btn-open').addEventListener('click', async () => {
+    const path = await api.selectHtmlFile();
+    if (!path) return;
+    await loadContentFile(path);
+    await loadViewerFile(path);
   });
 
-  // Save as Markdown button
-  document.getElementById('btn-save-md').addEventListener('click', async () => {
+  document.getElementById('btn-save').addEventListener('click', saveDocument);
+  document.getElementById('btn-save-md').addEventListener('click', saveMarkdown);
+
+  async function saveDocument() {
     try {
-      const md = await api.htmlToMarkdown(editor.value);
-      if (currentFilePath) {
-        const mdPath = currentFilePath.replace(/\.html?$/i, '.md');
-        await api.writeFile(mdPath, md);
-        alert(`Markdown 저장 완료: ${mdPath.split(/[\\/]/).pop()}`);
+      let htmlContent;
+
+      if (editor && editorActive && tiptapModule) {
+        htmlContent = tiptapModule.getEditorHtml(editor);
       } else {
+        htmlContent = sourceEditor.value;
+      }
+
+      if (!currentFilePath) {
+        const path = await api.saveFileDialog('output.html');
+        if (!path) return;
+        currentFilePath = path;
+      }
+
+      await api.writeFile(currentFilePath, htmlContent);
+
+      // Also save markdown alongside
+      let mdSaved = false;
+      try {
+        const md = tiptapModule
+          ? tiptapModule.htmlToMarkdown(htmlContent)
+          : await api.htmlToMarkdown(htmlContent);
+        const mdPath = markdownFilePath || currentFilePath.replace(/\.html?$/i, '.md');
+        await api.writeFile(mdPath, md);
+        markdownFilePath = mdPath;
+        mdSaved = true;
+      } catch (mdErr) {
+        console.warn('Markdown save failed:', mdErr);
+      }
+
+      setStatus(mdSaved ? '저장 완료 (HTML + Markdown)' : '저장 완료 (HTML만, Markdown 변환 실패)');
+      document.title = `${currentFilePath.split(/[\\/]/).pop()} - 저장됨`;
+    } catch (e) {
+      console.error('Save failed:', e);
+      setStatus(`저장 실패: ${e}`);
+      alert(`저장 실패: ${e}`);
+    }
+  }
+
+  async function saveMarkdown() {
+    try {
+      let htmlContent;
+      if (editor && editorActive && tiptapModule) {
+        htmlContent = tiptapModule.getEditorHtml(editor);
+      } else {
+        htmlContent = sourceEditor.value;
+      }
+
+      const md = tiptapModule
+        ? tiptapModule.htmlToMarkdown(htmlContent)
+        : await api.htmlToMarkdown(htmlContent);
+
+      if (!markdownFilePath) {
         const path = await api.saveFileDialog('output.md', [
           { name: 'Markdown', extensions: ['md'] },
         ]);
-        if (path) {
-          await api.writeFile(path, md);
-          alert(`Markdown 저장 완료: ${path.split(/[\\/]/).pop()}`);
-        }
+        if (!path) return;
+        markdownFilePath = path;
       }
+
+      await api.writeFile(markdownFilePath, md);
+      setStatus(`Markdown 저장 완료: ${markdownFilePath.split(/[\\/]/).pop()}`);
     } catch (e) {
       console.error('Markdown save failed:', e);
       alert(`Markdown 저장 실패: ${e}`);
     }
-  });
+  }
 
-  // ─── View mode
-  document.getElementById('view-mode').addEventListener('change', (e) => {
-    const container = document.getElementById('editor-container');
-    const editPane = document.getElementById('edit-pane');
-    const previewPane = document.getElementById('preview-pane');
-    const divider = document.getElementById('divider');
-
-    switch (e.target.value) {
-      case 'split':
-        editPane.style.display = 'flex';
-        previewPane.style.display = 'flex';
-        divider.style.display = 'block';
-        break;
-      case 'edit':
-        editPane.style.display = 'flex';
-        previewPane.style.display = 'none';
-        divider.style.display = 'none';
-        break;
-      case 'preview':
-        editPane.style.display = 'none';
-        previewPane.style.display = 'flex';
-        divider.style.display = 'none';
-        break;
-    }
-  });
-
-  // ─── Keyboard shortcuts
-  editor.addEventListener('keydown', (e) => {
+  // ─── Keyboard Shortcuts ───────────────────────────────
+  document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey) {
       if (e.key === 's') {
         e.preventDefault();
-        document.getElementById('btn-save').click();
+        saveDocument();
       }
     }
   });
 
-  // ─── Resizable divider
-  const divider = document.getElementById('divider');
+  // ─── Resizable Divider ────────────────────────────────
   let isDragging = false;
   divider.addEventListener('mousedown', () => { isDragging = true; });
   document.addEventListener('mousemove', (e) => {
@@ -242,12 +433,16 @@
     const container = document.getElementById('editor-container');
     const rect = container.getBoundingClientRect();
     const ratio = (e.clientX - rect.left) / rect.width;
-    const editPane = document.getElementById('edit-pane');
-    const previewPane = document.getElementById('preview-pane');
-    editPane.style.flex = ratio;
-    previewPane.style.flex = 1 - ratio;
+    const clamped = Math.max(0.2, Math.min(0.8, ratio));
+    viewerPane.style.flex = clamped;
+    editPane.style.flex = 1 - clamped;
   });
   document.addEventListener('mouseup', () => { isDragging = false; });
+
+  // ─── Status ───────────────────────────────────────────
+  function setStatus(msg) {
+    statusText.textContent = msg;
+  }
 </script>
 </body>
 </html>

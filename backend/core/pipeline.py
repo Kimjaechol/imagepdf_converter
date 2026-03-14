@@ -18,6 +18,7 @@ from typing import Any, Callable
 import yaml
 
 from backend.models.schema import (
+    BlockType,
     DocumentResult,
     LayoutBlock,
     PageResult,
@@ -58,6 +59,13 @@ class PipelineConfig:
     gemini_visual_batch_size: int = 3
     gemini_max_structure_change: float = 0.3
 
+    # ── User-provided LLM correction (optional, runs locally) ──
+    # If user provides their own API key, LLM correction runs on their machine
+    # provider: "gemini" | "openai" | "claude" | "" (disabled)
+    user_llm_provider: str = ""
+    user_llm_api_key: str = ""
+    user_llm_model: str = ""  # empty = use default for provider
+
     # ── kept for backward-compat with server.py / YAML ──
     pipeline_mode: str = "upstage_hybrid"
     pages_per_chunk: int = 10
@@ -89,6 +97,7 @@ class PipelineConfig:
         layout = data.get("layout", {})
         ocr = data.get("ocr", {})
         table = data.get("table", {})
+        user_llm = data.get("user_llm", {})
 
         return cls(
             dpi=pipe.get("dpi", 300),
@@ -124,6 +133,10 @@ class PipelineConfig:
             heading_mode=head.get("mode", "hybrid"),
             heading_llm=head.get("llm_provider", "gemini"),
             heading_ollama_model=head.get("ollama_model", "qwen2.5:0.5b-instruct"),
+            # User LLM correction
+            user_llm_provider=user_llm.get("provider", ""),
+            user_llm_api_key=user_llm.get("api_key", ""),
+            user_llm_model=user_llm.get("model", ""),
         )
 
 
@@ -168,6 +181,7 @@ class Pipeline:
         self._upstage_parser = None
         self._digital_extractor = None
         self._gemini_refiner = None
+        self._user_llm_corrector = None
 
     # ------------------------------------------------------------------
     # Lazy properties
@@ -205,6 +219,18 @@ class Pipeline:
                 ),
             )
         return self._gemini_refiner
+
+    @property
+    def user_llm_corrector(self):
+        """User-provided LLM corrector (optional, runs locally)."""
+        if self._user_llm_corrector is None and self.cfg.user_llm_provider:
+            from .llm_corrector import create_corrector
+            self._user_llm_corrector = create_corrector(
+                provider=self.cfg.user_llm_provider,
+                api_key=self.cfg.user_llm_api_key,
+                model=self.cfg.user_llm_model,
+            )
+        return self._user_llm_corrector
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -251,10 +277,20 @@ class Pipeline:
                 job, images_dir,
             )
 
-        # ── Step 3: Gemini visual comparison ──
+        # ── Step 3: Gemini visual comparison (operator key, optional) ──
+        # Only runs if GEMINI_API_KEY is set on the server (operator's key).
+        # If not set, skip this step – user can optionally use their own
+        # LLM key for correction in Step 3b.
         all_pages = self._refine_with_gemini(
             all_pages, page_images, job,
         )
+
+        # ── Step 3b: User LLM correction (user's own API key, optional) ──
+        # If the user provided their own LLM API key (Gemini/OpenAI/Claude),
+        # apply additional correction locally on their machine.
+        if self.user_llm_corrector:
+            self.progress_callback("사용자 LLM 교정 중", 0.75)
+            all_pages = self._correct_with_user_llm(all_pages, is_digital)
 
         # ── Step 4: Dictionary-based correction ──
         self.progress_callback("Applying dictionary corrections", 0.80)
@@ -289,9 +325,16 @@ class Pipeline:
         if "markdown" in job.output_formats:
             result.markdown = self.md_renderer.render(all_pages)
 
+        # ── Step 7b: Generate viewer HTML (pdf2htmlEX or fallback) ──
+        # Only for digital PDFs – produces a high-fidelity layout-preserving
+        # HTML for the read-only viewer layer.
+        if is_digital and "html" in job.output_formats:
+            self.progress_callback("Generating viewer HTML", 0.92)
+            result.viewer_html = self._generate_viewer_html(job)
+
         # ── Step 8: Save ──
         self.progress_callback("Saving files", 0.95)
-        self._save_outputs(result, job)
+        self._save_outputs(result, job, is_digital=is_digital)
 
         elapsed = time.time() - start
         self.progress_callback(f"Done in {elapsed:.1f}s", 1.0)
@@ -408,6 +451,46 @@ class Pipeline:
         return refinement_result.pages
 
     # ------------------------------------------------------------------
+    # User LLM correction (optional, local)
+    # ------------------------------------------------------------------
+
+    def _correct_with_user_llm(
+        self,
+        all_pages: list[PageResult],
+        is_digital: bool,
+    ) -> list[PageResult]:
+        """Apply user's own LLM for text correction on extracted blocks."""
+        corrector = self.user_llm_corrector
+        if not corrector:
+            return all_pages
+
+        source_type = "digital_pdf" if is_digital else "image_pdf"
+
+        for page in all_pages:
+            for block in page.blocks:
+                if not block.text or not block.text.strip():
+                    continue
+                # Only correct text-bearing blocks
+                if block.block_type in (
+                    BlockType.PARAGRAPH, BlockType.HEADING,
+                    BlockType.LIST, BlockType.CAPTION,
+                    BlockType.FOOTNOTE,
+                ):
+                    try:
+                        corrected = corrector.correct_html(
+                            block.text, source_type=source_type,
+                        )
+                        if corrected and corrected.strip():
+                            block.text = corrected
+                    except Exception as exc:
+                        logger.warning(
+                            "User LLM correction failed for block %s: %s",
+                            block.id, exc,
+                        )
+
+        return all_pages
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -438,21 +521,77 @@ class Pipeline:
         doc.close()
         return page_images
 
-    def _save_outputs(self, result: DocumentResult, job: PdfJob) -> None:
-        """Save HTML and Markdown files to disk."""
+    def _generate_viewer_html(self, job: PdfJob) -> str:
+        """Generate high-fidelity viewer HTML using pdf2htmlEX (or fallback).
+
+        The viewer HTML preserves the original PDF layout as closely as possible
+        using absolute positioning. It is read-only – editing happens in the
+        Tiptap editor which works with the structured Markdown/HTML.
+        """
+        from .pdf2html_renderer import (
+            is_pdf2htmlex_available,
+            render_pdf_to_viewer_html,
+            render_pdf_to_viewer_html_fallback,
+        )
+
+        viewer_dir = job.output_dir / "viewer"
+        viewer_dir.mkdir(parents=True, exist_ok=True)
+
+        viewer_path = None
+
+        if is_pdf2htmlex_available():
+            viewer_path = render_pdf_to_viewer_html(
+                job.input_path,
+                viewer_dir,
+                output_filename="viewer.html",
+            )
+
+        if viewer_path is None:
+            # Fallback to PyMuPDF HTML rendering
+            viewer_path = render_pdf_to_viewer_html_fallback(
+                job.input_path,
+                viewer_dir,
+                output_filename="viewer.html",
+            )
+
+        if viewer_path and viewer_path.exists():
+            return viewer_path.read_text(encoding="utf-8")
+
+        return ""
+
+    def _save_outputs(
+        self, result: DocumentResult, job: PdfJob, *, is_digital: bool = False,
+    ) -> None:
+        """Save HTML, Markdown, and viewer HTML files to disk."""
         job.output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_files = []
 
         if result.html:
             html_path = job.output_dir / f"{job.filename or 'output'}.html"
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(result.html)
+            output_files.append(str(html_path))
             logger.info("Saved HTML: %s", html_path)
 
         if result.markdown:
             md_path = job.output_dir / f"{job.filename or 'output'}.md"
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(result.markdown)
+            output_files.append(str(md_path))
             logger.info("Saved Markdown: %s", md_path)
+
+        if result.viewer_html:
+            viewer_path = job.output_dir / "viewer" / "viewer.html"
+            # viewer.html is already saved by _generate_viewer_html,
+            # but ensure it's tracked
+            if viewer_path.exists():
+                output_files.append(str(viewer_path))
+                logger.info("Viewer HTML: %s", viewer_path)
+
+        result.metadata["output_files"] = output_files
+        result.metadata["is_digital"] = is_digital
+        result.metadata["has_viewer"] = bool(result.viewer_html)
 
     def process_folder(
         self,

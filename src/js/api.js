@@ -291,11 +291,63 @@ export async function createCheckout(amountUsd) {
   return await invoke("create_checkout", { amountUsd });
 }
 
+// ─── R2 Upload (Image PDF Hybrid Architecture) ──────
+export async function getR2Status() {
+  return await invoke("r2_status");
+}
+
+export async function getR2PresignedUpload(filename, contentType) {
+  return await invoke("r2_presigned_upload", {
+    filename,
+    contentType: contentType || "application/pdf",
+  });
+}
+
+export async function parseImagePdfFromR2(objectKey, outputFormats, upstageMode) {
+  return await invoke("parse_image_pdf", {
+    objectKey,
+    outputFormats: outputFormats || ["html", "markdown"],
+    upstageMode: upstageMode || "auto",
+  });
+}
+
+// ─── Local LLM Correction ────────────────────────────
+export async function correctWithLLM(html, provider, apiKey, model, sourceType) {
+  return await invoke("correct_with_llm", {
+    html,
+    provider,
+    apiKey,
+    model: model || "",
+    sourceType: sourceType || "image_pdf",
+  });
+}
+
+// ─── User LLM API Key Management (stored locally) ───
+export function getUserLLMConfig() {
+  try {
+    return JSON.parse(localStorage.getItem("user_llm_config") || "null") || {
+      provider: "",
+      api_key: "",
+      model: "",
+    };
+  } catch {
+    return { provider: "", api_key: "", model: "" };
+  }
+}
+
+export function setUserLLMConfig(config) {
+  localStorage.setItem("user_llm_config", JSON.stringify(config));
+}
+
+export function clearUserLLMConfig() {
+  localStorage.removeItem("user_llm_config");
+}
+
 // ─── WebSocket Progress ──────────────────────────────
 export async function connectProgress(jobId, onMessage) {
   try {
     const baseUrl = await getBackendUrl();
-    const wsUrl = baseUrl.replace("http://", "ws://") + `/ws/progress/${jobId}`;
+    const wsUrl = baseUrl.replace("https://", "wss://").replace("http://", "ws://") + `/ws/progress/${jobId}`;
     const ws = new WebSocket(wsUrl);
 
     return new Promise((resolve) => {
@@ -334,8 +386,12 @@ export async function htmlToMarkdown(html) {
 }
 
 // ─── Editor Window ────────────────────────────────────
-export async function openEditorWindow(filePath) {
-  return await invoke("open_editor_window", { filePath: filePath || null });
+export async function openEditorWindow(filePath, viewerPath, mdPath) {
+  return await invoke("open_editor_window", {
+    filePath: filePath || null,
+    viewerPath: viewerPath || null,
+    mdPath: mdPath || null,
+  });
 }
 
 // ─── Utility ─────────────────────────────────────────

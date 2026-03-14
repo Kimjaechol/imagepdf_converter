@@ -133,6 +133,108 @@ pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
+// ─── R2 Upload (Image PDF Hybrid Architecture) ───────
+
+#[tauri::command]
+pub async fn r2_status() -> Result<serde_json::Value, String> {
+    let resp = reqwest::get(format!("{}/api/r2/status", backend_url()))
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "R2 status").await?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
+#[tauri::command]
+pub async fn r2_presigned_upload(
+    app: tauri::AppHandle,
+    filename: String,
+    content_type: String,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/r2/presigned-upload", backend_url()))
+        .header("Authorization", auth_header(&app))
+        .json(&serde_json::json!({
+            "filename": filename,
+            "content_type": content_type,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "R2 presigned upload").await?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
+#[tauri::command]
+pub async fn parse_image_pdf(
+    app: tauri::AppHandle,
+    object_key: String,
+    output_formats: Vec<String>,
+    upstage_mode: String,
+) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/parse/image-pdf", backend_url()))
+        .header("Authorization", auth_header(&app))
+        .json(&serde_json::json!({
+            "object_key": object_key,
+            "output_formats": output_formats,
+            "upstage_mode": upstage_mode,
+        }))
+        .timeout(std::time::Duration::from_secs(600))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let resp = check_response(resp, "Image PDF parse").await?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
+// ─── Local LLM Correction ────────────────────────────
+
+#[tauri::command]
+pub async fn correct_with_llm(
+    html: String,
+    provider: String,
+    api_key: String,
+    model: String,
+    source_type: String,
+) -> Result<serde_json::Value, String> {
+    // This calls the LOCAL Python backend (user's machine).
+    // The API key goes from user's machine directly to the LLM provider.
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/correct/llm", backend_url()))
+        .json(&serde_json::json!({
+            "html": html,
+            "provider": provider,
+            "api_key": api_key,
+            "model": model,
+            "source_type": source_type,
+        }))
+        .timeout(std::time::Duration::from_secs(300))
+        .send()
+        .await
+        .map_err(|e| format!("LLM correction request failed: {}", e))?;
+
+    let resp = check_response(resp, "LLM correction").await?;
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Parse failed: {}", e))
+}
+
 // ─── Exchange Rate ────────────────────────────────────
 
 #[tauri::command]

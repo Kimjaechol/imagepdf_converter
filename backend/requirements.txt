@@ -31,3 +31,10 @@ stripe>=7.0.0
 
 # Supabase Auth & Database
 supabase>=2.0.0
+
+# Cloudflare R2 (S3-compatible object storage)
+boto3>=1.34.0
+
+# LLM providers (optional, for user-provided API key correction)
+openai>=1.0.0
+anthropic>=0.40.0

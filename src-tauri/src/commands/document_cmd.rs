@@ -6,6 +6,9 @@ pub struct DocConvertResult {
     pub markdown: Option<String>,
     pub output_files: Vec<String>,
     pub images: Vec<String>,
+    pub html_file: Option<String>,
+    pub md_file: Option<String>,
+    pub viewer_file: Option<String>,
 }
 
 #[tauri::command]
@@ -80,5 +83,8 @@ async fn do_convert(
         markdown: result.markdown,
         output_files: result.output_files,
         images: result.images,
+        html_file: result.html_file,
+        md_file: result.md_file,
+        viewer_file: result.viewer_file,
     })
 }

@@ -21,6 +21,7 @@ from backend.services.credit_service import CreditService
 from backend.services.auth_service import AuthService
 from backend.services.payment_service import PaymentService
 from backend.services.exchange_rate_service import ExchangeRateService
+from backend.services.r2_service import R2Service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ _credit_service: CreditService | None = None
 _auth_service: AuthService | None = None
 _payment_service: PaymentService | None = None
 _exchange_rate_service: ExchangeRateService | None = None
+_r2_service: R2Service | None = None
 
 
 def _get_credit_service() -> CreditService:
@@ -85,6 +87,13 @@ def _get_exchange_rate_service() -> ExchangeRateService:
         _exchange_rate_service = ExchangeRateService(data_dir="data")
         _exchange_rate_service.start()
     return _exchange_rate_service
+
+
+def _get_r2_service() -> R2Service:
+    global _r2_service
+    if _r2_service is None:
+        _r2_service = R2Service()
+    return _r2_service
 
 
 async def get_current_user(authorization: str = Header(default="")) -> dict:
@@ -224,6 +233,27 @@ class CancelTossPaymentRequest(BaseModel):
 class EstimateCostRequest(BaseModel):
     num_pages: int
     doc_type: str = "image_pdf"  # "image_pdf" | "digital_pdf" | "other"
+
+
+class R2UploadUrlRequest(BaseModel):
+    filename: str
+    content_type: str = "application/pdf"
+
+
+class ImagePdfParseRequest(BaseModel):
+    """Request to parse an image PDF that was uploaded to R2."""
+    object_key: str  # R2 object key from the upload step
+    output_formats: list[str] = ["html", "markdown"]
+    upstage_mode: str = "auto"  # auto | standard | enhanced
+
+
+class LocalLLMCorrectionRequest(BaseModel):
+    """Request to apply LLM correction to HTML (runs locally on user machine)."""
+    html: str
+    provider: str  # "gemini" | "openai" | "claude"
+    api_key: str
+    model: str = ""  # empty = use default
+    source_type: str = "image_pdf"  # image_pdf | digital_pdf | document
 
 
 class DocumentConvertRequest(BaseModel):
@@ -451,6 +481,55 @@ async def get_pipeline_mode():
 # ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
+
+
+class PdfTypeCheckRequest(BaseModel):
+    pdf_path: str
+
+
+@app.post("/api/diagnostics/pdf-type")
+async def check_pdf_type(req: PdfTypeCheckRequest):
+    """Detect whether a PDF is digital (text-based) or image-only (scanned).
+
+    Uses dual-tier detection: font resource check + text layer extraction.
+    Returns detailed per-page diagnostic info.
+    """
+    pdf_path = Path(req.pdf_path)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found")
+
+    try:
+        from backend.core.digital_pdf_extractor import DigitalPdfExtractor
+        extractor = DigitalPdfExtractor()
+        report = await asyncio.get_event_loop().run_in_executor(
+            None, extractor.detect_pdf_type, pdf_path,
+        )
+        return report
+    except Exception as exc:
+        logger.error("PDF type detection failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/diagnostics/pdf2htmlex")
+async def pdf2htmlex_status():
+    """Check if pdf2htmlEX is installed and get version info."""
+    try:
+        from backend.core.pdf2html_renderer import (
+            is_pdf2htmlex_available,
+            get_pdf2htmlex_version,
+        )
+        available = is_pdf2htmlex_available()
+        version = get_pdf2htmlex_version() if available else None
+        return {
+            "available": available,
+            "version": version,
+            "description": (
+                "pdf2htmlEX produces high-fidelity viewer HTML. "
+                "If not installed, PyMuPDF fallback is used."
+            ),
+        }
+    except Exception as exc:
+        return {"available": False, "version": None, "error": str(exc)}
 
 
 class BidiCheckRequest(BaseModel):
@@ -863,6 +942,14 @@ def _convert_document_sync(
     if img_dir.exists():
         image_paths = [str(p) for p in img_dir.iterdir() if p.is_file()]
 
+    html_file = None
+    md_file = None
+    for f in output_files:
+        if f.endswith(".html") or f.endswith(".htm"):
+            html_file = f
+        elif f.endswith(".md"):
+            md_file = f
+
     return {
         "html": html if want_html else None,
         "markdown": markdown,
@@ -874,6 +961,9 @@ def _convert_document_sync(
         "engine": "hancom",
         "translated": translated,
         "elapsed_seconds": elapsed,
+        "html_file": html_file,
+        "md_file": md_file,
+        "viewer_file": None,
     }
 
 
@@ -1461,10 +1551,19 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
         output_files = []
         output_dir = Path(req.output_dir)
         filename = Path(req.input_path).stem
+        html_file = None
+        md_file = None
+        viewer_file = None
+
         if result.html:
-            output_files.append(str(output_dir / f"{filename}.html"))
+            html_file = str(output_dir / f"{filename}.html")
+            output_files.append(html_file)
         if result.markdown:
-            output_files.append(str(output_dir / f"{filename}.md"))
+            md_file = str(output_dir / f"{filename}.md")
+            output_files.append(md_file)
+        if result.viewer_html:
+            viewer_file = str(output_dir / "viewer" / "viewer.html")
+            output_files.append(viewer_file)
 
         _jobs[job_id]["status"] = "completed"
         _jobs[job_id]["progress"] = 1.0
@@ -1473,6 +1572,11 @@ def _run_conversion(job_id: str, req: ConvertRequest) -> None:
             "total_pages": result.total_pages,
             "output_dir": req.output_dir,
             "output_files": output_files,
+            "html_file": html_file,
+            "md_file": md_file,
+            "viewer_file": viewer_file,
+            "is_digital": result.metadata.get("is_digital", False),
+            "has_viewer": result.metadata.get("has_viewer", False),
             "elapsed_seconds": result.metadata.get("elapsed_seconds", 0),
         }
 
@@ -1545,6 +1649,255 @@ def _run_batch_conversion(job_id: str, req: BatchConvertRequest, user_id: str = 
         logger.error("Batch job %s failed: %s", job_id, exc)
         _jobs[job_id]["status"] = "error"
         _jobs[job_id]["message"] = str(exc)
+
+
+# ---------------------------------------------------------------------------
+# R2 Upload & Image PDF Parsing (Hybrid Architecture)
+# ---------------------------------------------------------------------------
+# Large image PDFs bypass Railway traffic by uploading directly to R2.
+# Railway only handles control flow: pre-signed URL, Upstage API call, credits.
+
+@app.get("/api/r2/status")
+async def r2_status():
+    """Check if Cloudflare R2 is configured and accessible."""
+    try:
+        svc = _get_r2_service()
+        return {
+            "configured": svc.config.is_configured,
+            "available": svc.is_available() if svc.config.is_configured else False,
+            "bucket": svc.config.bucket_name if svc.config.is_configured else None,
+        }
+    except Exception:
+        return {"configured": False, "available": False, "bucket": None}
+
+
+@app.post("/api/r2/presigned-upload")
+async def r2_presigned_upload(req: R2UploadUrlRequest, user: dict = Depends(get_current_user)):
+    """Generate a pre-signed URL for direct file upload to R2.
+
+    The client uses this URL to upload the PDF directly to R2,
+    bypassing Railway and avoiding large traffic through the proxy.
+    """
+    try:
+        svc = _get_r2_service()
+        if not svc.config.is_configured:
+            raise HTTPException(
+                503,
+                "R2 스토리지가 설정되지 않았습니다. 관리자에게 문의하세요.",
+            )
+
+        result = svc.generate_upload_url(
+            user_id=user["user_id"],
+            filename=req.filename,
+            content_type=req.content_type,
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("R2 presigned URL generation failed: %s", exc)
+        raise HTTPException(500, f"업로드 URL 생성 실패: {exc}")
+
+
+@app.post("/api/parse/image-pdf")
+async def parse_image_pdf(req: ImagePdfParseRequest, user: dict = Depends(get_current_user)):
+    """Parse an image PDF that was uploaded to R2 via Upstage Document Parse.
+
+    Flow:
+      1. Verify the R2 object exists
+      2. Check user credits (based on page count)
+      3. Download from R2 to temp file
+      4. Call Upstage Document Parse
+      5. Render HTML + Markdown from parsed results
+      6. Debit credits
+      7. Clean up temp file and optionally delete R2 object
+      8. Return HTML + Markdown
+
+    The Upstage API key stays on the Railway server – never exposed to clients.
+    """
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, _parse_image_pdf_sync, req, user["user_id"],
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Image PDF parsing failed: %s", exc)
+        raise HTTPException(500, f"PDF 파싱 실패: {exc}")
+
+
+def _parse_image_pdf_sync(req: ImagePdfParseRequest, user_id: str) -> dict:
+    """Synchronous image PDF parsing via R2 + Upstage."""
+    import tempfile
+    import time as _time
+
+    start = _time.time()
+    r2 = _get_r2_service()
+
+    # Step 1: Verify the object exists in R2
+    if not r2.object_exists(req.object_key):
+        raise HTTPException(404, "R2에서 파일을 찾을 수 없습니다. 업로드를 다시 시도해주세요.")
+
+    # Step 2: Download from R2 to temp file
+    tmp_dir = Path(tempfile.mkdtemp(prefix="r2_parse_"))
+    filename = req.object_key.split("/")[-1]
+    local_path = tmp_dir / filename
+
+    try:
+        r2.download_to_file(req.object_key, str(local_path))
+    except Exception as exc:
+        raise HTTPException(500, f"R2에서 파일 다운로드 실패: {exc}")
+
+    # Step 3: Count pages and check credits
+    try:
+        import fitz
+        with fitz.open(str(local_path)) as doc:
+            num_pages = len(doc)
+    except Exception:
+        num_pages = 1
+
+    credit_svc = _get_credit_service()
+    if not credit_svc.check_sufficient_balance(user_id, num_pages, "image_pdf"):
+        balance = credit_svc.get_balance(user_id)
+        cost = credit_svc.estimate_cost(num_pages, "image_pdf")
+        raise HTTPException(
+            402,
+            f"크레딧이 부족합니다. 필요: ${cost['charged_usd']:.4f}, "
+            f"잔액: ${balance:.4f}. 먼저 크레딧을 충전해주세요.",
+        )
+
+    # Step 4: Call Upstage Document Parse
+    upstage_key = os.environ.get("UPSTAGE_API_KEY", "")
+    if not upstage_key:
+        raise HTTPException(
+            503,
+            "Upstage API 키가 설정되지 않았습니다. 관리자에게 문의하세요.",
+        )
+
+    from backend.core.upstage_parser import UpstageDocumentParser, UpstageParseConfig
+
+    parser = UpstageDocumentParser(
+        config=UpstageParseConfig(mode=req.upstage_mode),
+    )
+    page_results = parser.parse_pdf(local_path)
+
+    if not page_results:
+        raise HTTPException(500, "Upstage Document Parse에서 결과를 반환하지 않았습니다.")
+
+    # Step 5: Render HTML + Markdown
+    cfg = _get_config()
+
+    from backend.core.html_renderer import HtmlRenderer
+    from backend.core.md_renderer import MarkdownRenderer
+
+    html_content = ""
+    md_content = ""
+
+    if "html" in req.output_formats:
+        renderer = HtmlRenderer(
+            simplified=cfg.html_simplified,
+            inline_css=cfg.html_inline_css,
+        )
+        html_content = renderer.render(page_results)
+
+    if "markdown" in req.output_formats:
+        md_renderer = MarkdownRenderer(
+            table_format=cfg.md_table_format,
+            footnote_style=cfg.md_footnote_style,
+        )
+        md_content = md_renderer.render(page_results)
+
+    # Step 6: Debit credits
+    credit_svc.debit_usage(
+        user_id, num_pages, "image_pdf",
+        description=f"R2 image PDF: {filename} ({num_pages}p)",
+    )
+
+    # Step 7: Cleanup
+    try:
+        local_path.unlink(missing_ok=True)
+        tmp_dir.rmdir()
+    except Exception:
+        pass
+
+    # Optionally delete the R2 object (keep for 24h for re-processing)
+    # r2.delete_object(req.object_key)
+
+    elapsed = round(_time.time() - start, 2)
+
+    logger.info(
+        "Image PDF parsed: user=%s pages=%d elapsed=%.1fs key=%s",
+        user_id, num_pages, elapsed, req.object_key,
+    )
+
+    return {
+        "html": html_content,
+        "markdown": md_content,
+        "num_pages": num_pages,
+        "elapsed_seconds": elapsed,
+        "object_key": req.object_key,
+        "engine": "upstage_r2",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Local LLM Correction (runs on user's machine with their own API key)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/correct/llm")
+async def correct_with_llm(req: LocalLLMCorrectionRequest):
+    """Apply LLM correction to HTML using user-provided API key.
+
+    This endpoint runs on the LOCAL Python backend (user's machine),
+    NOT on Railway. The API key goes directly from the user's machine
+    to the LLM provider – it never touches the Railway server.
+
+    No authentication required since this is a local-only endpoint.
+    """
+    if not req.html or not req.html.strip():
+        return {"html": req.html, "corrected": False}
+
+    if not req.provider or not req.api_key:
+        return {"html": req.html, "corrected": False}
+
+    try:
+        from backend.core.llm_corrector import create_corrector
+
+        corrector = create_corrector(
+            provider=req.provider,
+            api_key=req.api_key,
+            model=req.model,
+        )
+
+        if not corrector:
+            return {"html": req.html, "corrected": False}
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            corrector.correct_html,
+            req.html,
+            req.source_type,
+        )
+
+        return {
+            "html": result,
+            "corrected": result != req.html,
+            "provider": req.provider,
+            "model": corrector.config.effective_model,
+        }
+
+    except ImportError as exc:
+        logger.warning("LLM provider package not installed: %s", exc)
+        raise HTTPException(
+            400,
+            f"LLM 패키지가 설치되지 않았습니다: {exc}. "
+            f"pip install {'google-generativeai' if req.provider == 'gemini' else req.provider}",
+        )
+    except Exception as exc:
+        logger.error("LLM correction failed: %s", exc)
+        raise HTTPException(500, f"LLM 교정 실패: {exc}")
 
 
 # ---------------------------------------------------------------------------

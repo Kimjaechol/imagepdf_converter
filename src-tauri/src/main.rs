@@ -139,6 +139,12 @@ fn main() {
             commands::credit_cmd::get_pricing,
             commands::credit_cmd::get_credit_history,
             commands::credit_cmd::create_checkout,
+            // R2 Upload & Image PDF parsing
+            commands::credit_cmd::r2_status,
+            commands::credit_cmd::r2_presigned_upload,
+            commands::credit_cmd::parse_image_pdf,
+            // Local LLM correction
+            commands::credit_cmd::correct_with_llm,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -147,11 +153,17 @@ fn main() {
                     let handle = window.app_handle().clone();
                     // Use thread to ensure cleanup completes before exit
                     std::thread::spawn(move || {
-                        let rt = tokio::runtime::Builder::new_current_thread()
+                        match tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
-                            .unwrap();
-                        rt.block_on(backend::process::stop_backend(&handle));
+                        {
+                            Ok(rt) => {
+                                rt.block_on(backend::process::stop_backend(&handle));
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create runtime for backend shutdown: {}", e);
+                            }
+                        }
                     });
                 }
             }

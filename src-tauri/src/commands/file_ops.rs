@@ -33,28 +33,46 @@ pub fn open_path_native(path: String) -> Result<bool, String> {
     open::that(&path).map(|_| true).map_err(|e| format!("열기 실패: {}", e))
 }
 
-/// Open the HTML editor in a new Tauri webview window.
+/// Percent-encode a file path for use in a URL query parameter.
+fn percent_encode_path(path: &str) -> String {
+    path.as_bytes()
+        .iter()
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || b"-_.~/\\:".contains(&b) {
+                String::from(b as char)
+            } else {
+                format!("%{:02X}", b)
+            }
+        })
+        .collect()
+}
+
+/// Open the document editor in a new Tauri webview window.
+///
+/// Supports the 2-layer viewer + editor architecture:
+///   - `file_path`: The editable HTML content file (structured HTML from pipeline)
+///   - `viewer_path`: Optional high-fidelity viewer HTML (pdf2htmlEX output)
+///   - `md_path`: Optional markdown file path for save sync
 #[tauri::command]
 pub async fn open_editor_window(
     app: tauri::AppHandle,
     file_path: Option<String>,
+    viewer_path: Option<String>,
+    md_path: Option<String>,
 ) -> Result<bool, String> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     let url = if let Some(ref fp) = file_path {
-        // Properly percent-encode the file path (encode each UTF-8 byte individually)
-        let encoded: String = fp
-            .as_bytes()
-            .iter()
-            .map(|&b| {
-                if b.is_ascii_alphanumeric() || b"-_.~/\\:".contains(&b) {
-                    String::from(b as char)
-                } else {
-                    format!("%{:02X}", b)
-                }
-            })
-            .collect();
-        WebviewUrl::App(format!("editor.html?file={}", encoded).into())
+        let mut query = format!("file={}", percent_encode_path(fp));
+
+        if let Some(ref vp) = viewer_path {
+            query.push_str(&format!("&viewer={}", percent_encode_path(vp)));
+        }
+        if let Some(ref mp) = md_path {
+            query.push_str(&format!("&md={}", percent_encode_path(mp)));
+        }
+
+        WebviewUrl::App(format!("editor.html?{}", query).into())
     } else {
         WebviewUrl::App("editor.html".into())
     };
@@ -65,9 +83,9 @@ pub async fn open_editor_window(
     }
 
     WebviewWindowBuilder::new(&app, "editor", url)
-        .title("HTML 에디터 - MoA 문서 변환기")
-        .inner_size(1100.0, 750.0)
-        .min_inner_size(800.0, 500.0)
+        .title("문서 편집기 - MoA 문서 변환기")
+        .inner_size(1400.0, 850.0)
+        .min_inner_size(900.0, 600.0)
         .center()
         .build()
         .map(|_| true)
