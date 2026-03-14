@@ -153,11 +153,17 @@ fn main() {
                     let handle = window.app_handle().clone();
                     // Use thread to ensure cleanup completes before exit
                     std::thread::spawn(move || {
-                        let rt = tokio::runtime::Builder::new_current_thread()
+                        match tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
-                            .unwrap();
-                        rt.block_on(backend::process::stop_backend(&handle));
+                        {
+                            Ok(rt) => {
+                                rt.block_on(backend::process::stop_backend(&handle));
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create runtime for backend shutdown: {}", e);
+                            }
+                        }
                     });
                 }
             }

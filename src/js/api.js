@@ -347,7 +347,7 @@ export function clearUserLLMConfig() {
 export async function connectProgress(jobId, onMessage) {
   try {
     const baseUrl = await getBackendUrl();
-    const wsUrl = baseUrl.replace("http://", "ws://") + `/ws/progress/${jobId}`;
+    const wsUrl = baseUrl.replace("https://", "wss://").replace("http://", "ws://") + `/ws/progress/${jobId}`;
     const ws = new WebSocket(wsUrl);
 
     return new Promise((resolve) => {

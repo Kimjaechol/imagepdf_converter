@@ -264,14 +264,24 @@ class CorrectionEngine:
         for correct, info in roman.items():
             for confused in info.get("confused_with", []):
                 # Only replace when it looks like a numeral context
-                for pattern_template in info.get("context_patterns", []):
-                    # Build context-aware pattern
-                    pass
-                # Simple replacement for now
-                if len(confused) == 1 and confused.isalpha():
-                    # Avoid replacing single letters in general text
-                    continue
-                text = text.replace(confused, correct)
+                context_patterns = info.get("context_patterns", [])
+                if context_patterns:
+                    for pattern_template in context_patterns:
+                        try:
+                            # Pattern template uses {char} placeholder for the confused character
+                            pattern_str = pattern_template.replace("{char}", re.escape(confused))
+                            pattern = re.compile(pattern_str)
+                            text = pattern.sub(
+                                lambda m: m.group(0).replace(confused, correct),
+                                text,
+                            )
+                        except re.error:
+                            logger.debug("Invalid context pattern: %s", pattern_template)
+                else:
+                    # No context patterns: simple replacement, but skip single letters
+                    if len(confused) == 1 and confused.isalpha():
+                        continue
+                    text = text.replace(confused, correct)
 
         # User custom
         for correct, info in self._dict.get("user_custom", {}).items():

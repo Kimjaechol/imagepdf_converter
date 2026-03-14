@@ -118,8 +118,7 @@ pub struct DocMeta {
 fn extract_tag_name(tag_buf: &str) -> &str {
     let tag = tag_buf.trim();
     // Handle closing tags: "/td", "/tr" etc.
-    if tag.starts_with('/') {
-        let rest = &tag[1..];
+    if let Some(rest) = tag.strip_prefix('/') {
         rest.split_whitespace().next().unwrap_or(rest)
             .split('/')
             .next()
@@ -133,7 +132,7 @@ fn extract_tag_name(tag_buf: &str) -> &str {
 }
 
 /// Extract attribute value from tag buffer: e.g. extract_attr("img src=\"foo.png\"", "src") → Some("foo.png")
-fn extract_attr<'a>(tag_buf: &'a str, attr_name: &str) -> Option<String> {
+fn extract_attr(tag_buf: &str, attr_name: &str) -> Option<String> {
     let search = format!("{}=\"", attr_name);
     if let Some(start) = tag_buf.find(&search) {
         let val_start = start + search.len();
@@ -277,10 +276,9 @@ pub fn html_to_markdown(html: &str) -> String {
                     "rdquo" => md.push('\u{201D}'),
                     _ => {
                         // Handle numeric entities &#NNN;
-                        if entity.starts_with('#') {
-                            let num_str = &entity[1..];
-                            let code = if num_str.starts_with('x') || num_str.starts_with('X') {
-                                u32::from_str_radix(&num_str[1..], 16).ok()
+                        if let Some(num_str) = entity.strip_prefix('#') {
+                            let code = if let Some(hex_str) = num_str.strip_prefix('x').or_else(|| num_str.strip_prefix('X')) {
+                                u32::from_str_radix(hex_str, 16).ok()
                             } else {
                                 num_str.parse::<u32>().ok()
                             };

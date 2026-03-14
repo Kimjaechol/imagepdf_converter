@@ -553,7 +553,7 @@ async function maybeApplyLLMCorrection(result, ext) {
     }
   } catch (e) {
     console.warn("LLM correction failed:", e);
-    // Don't fail the whole conversion, just skip correction
+    showStatus("AI 교정을 건너뛰었습니다 (오류: " + e + ")", "warning");
   }
 
   return result;
@@ -651,9 +651,12 @@ async function convertBatch() {
 }
 
 async function pollJobProgress(jobId) {
+  let errorCount = 0;
+  const maxErrors = 15;
   const poll = async () => {
     try {
       const status = await api.getJobStatus(jobId);
+      errorCount = 0; // reset on success
       updateProgress(status.progress * 100, status.message);
       if (status.status === "completed") {
         updateProgress(100, "완료!");
@@ -667,7 +670,14 @@ async function pollJobProgress(jobId) {
       }
       setTimeout(poll, 1000);
     } catch {
-      setTimeout(poll, 2000);
+      errorCount++;
+      if (errorCount >= maxErrors) {
+        showStatus("서버 연결 실패: 진행 상태를 확인할 수 없습니다.", "error");
+        return;
+      }
+      // Exponential backoff: 2s, 4s, 8s... capped at 10s
+      const delay = Math.min(2000 * Math.pow(2, errorCount - 1), 10000);
+      setTimeout(poll, delay);
     }
   };
   poll();
@@ -1090,7 +1100,10 @@ async function handlePurchaseCredit() {
 async function handleEstimateCost() {
   const pages = parseInt($("#estimate-pages")?.value || "0", 10);
   const docType = $("#estimate-doc-type")?.value || "image_pdf";
-  if (pages <= 0) return;
+  if (pages <= 0) {
+    showSettingsStatus("페이지 수는 1 이상이어야 합니다", "warning");
+    return;
+  }
   try {
     const est = await api.estimateCost(pages, docType);
     const el = $("#cost-estimate-result");
@@ -1139,16 +1152,17 @@ async function showCreditExhaustedPopup() {
 
   overlay.innerHTML = `
     <div style="
-      background: white; border-radius: 12px; padding: 32px; max-width: 420px;
+      background: var(--bg-primary, white); border-radius: 12px; padding: 32px; max-width: 420px;
       box-shadow: 0 8px 32px rgba(0,0,0,0.3); text-align: center;
+      color: var(--text-primary, #333);
     ">
       <div style="font-size: 48px; margin-bottom: 16px;">&#x1F4B3;</div>
-      <h3 style="margin: 0 0 12px 0; color: #333; font-size: 18px;">
+      <h3 style="margin: 0 0 12px 0; color: var(--text-primary, #333); font-size: 18px;">
         무료 크레딧이 모두 소진되었습니다
       </h3>
-      <p style="color: #666; margin: 0 0 20px 0; line-height: 1.6;">
+      <p style="color: var(--text-secondary, #666); margin: 0 0 20px 0; line-height: 1.6;">
         PDF 문서 변환을 계속하려면 크레딧을 충전해 주세요.<br>
-        <span style="font-size: 13px; color: #999;">
+        <span style="font-size: 13px; color: var(--text-muted, #999);">
           이미지 PDF: $0.02/페이지 (\u20A9${imgPdfKrw}) &middot; 디지털 PDF: $0.005/페이지 (\u20A9${digPdfKrw})<br>
           기타 문서 (DOCX, HWPX 등): 무료
         </span>
@@ -1159,7 +1173,7 @@ async function showCreditExhaustedPopup() {
           border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;
         ">크레딧 충전하기</button>
         <button id="credit-popup-close" style="
-          background: #eee; color: #666; border: none; padding: 10px 24px;
+          background: var(--bg-secondary, #eee); color: var(--text-secondary, #666); border: none; padding: 10px 24px;
           border-radius: 6px; cursor: pointer; font-size: 14px;
         ">닫기</button>
       </div>
