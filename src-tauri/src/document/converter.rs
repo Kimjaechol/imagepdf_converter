@@ -11,6 +11,9 @@ pub struct ConvertResult {
     pub page_count: Option<u32>,
     pub title: Option<String>,
     pub author: Option<String>,
+    pub html_file: Option<String>,
+    pub md_file: Option<String>,
+    pub viewer_file: Option<String>,
 }
 
 /// Unified document converter - routes to the right Rust-native converter
@@ -57,6 +60,9 @@ pub async fn convert_file(
         page_count: meta.page_count,
         title: meta.title,
         author: meta.author,
+        html_file: None,
+        md_file: None,
+        viewer_file: None,
     };
 
     // Save images - directory name must match HTML references (src="images/...")
@@ -89,7 +95,9 @@ pub async fn convert_file(
         tokio::fs::write(&html_path, &html_content)
             .await
             .map_err(|e| format!("Cannot write HTML: {}", e))?;
-        result.output_files.push(html_path.to_string_lossy().to_string());
+        let html_path_str = html_path.to_string_lossy().to_string();
+        result.output_files.push(html_path_str.clone());
+        result.html_file = Some(html_path_str);
     }
 
     // Convert HTML → Markdown
@@ -100,7 +108,9 @@ pub async fn convert_file(
             .await
             .map_err(|e| format!("Cannot write Markdown: {}", e))?;
         result.markdown = Some(md_content);
-        result.output_files.push(md_path.to_string_lossy().to_string());
+        let md_path_str = md_path.to_string_lossy().to_string();
+        result.output_files.push(md_path_str.clone());
+        result.md_file = Some(md_path_str);
     }
 
     Ok(result)

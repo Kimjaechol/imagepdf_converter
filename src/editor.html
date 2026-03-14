@@ -204,9 +204,12 @@
     try {
       const mod = await loadTiptap();
 
+      // Use latest source content (user may have edited in source view)
+      const contentToLoad = sourceEditor.value || originalHtml;
+
       if (!editor) {
         editor = mod.createMoaEditor(tiptapContainer, {
-          content: originalHtml,
+          content: contentToLoad,
           onUpdate: ({ editor: ed }) => {
             // Sync source editor on update (debounced)
             clearTimeout(debounceTimer);
@@ -216,7 +219,7 @@
           },
         });
       } else {
-        mod.setEditorContent(editor, originalHtml);
+        mod.setEditorContent(editor, contentToLoad);
       }
 
       editorActive = true;
@@ -291,6 +294,13 @@
   function applyViewMode(mode) {
     switch (mode) {
       case 'viewer-only':
+        // Sync source edits to Tiptap before hiding
+        if (editor && editorActive && tiptapModule && sourceEditor.value) {
+          const currentTiptapHtml = tiptapModule.getEditorHtml(editor);
+          if (sourceEditor.value !== currentTiptapHtml) {
+            tiptapModule.setEditorContent(editor, sourceEditor.value);
+          }
+        }
         viewerPane.style.display = 'flex';
         editPane.style.display = 'none';
         sourcePane.style.display = 'none';
@@ -301,6 +311,13 @@
         if (editorActive) {
           editPane.style.display = 'flex';
           divider.style.display = 'block';
+          // Sync source edits back to Tiptap when switching from source view
+          if (editor && tiptapModule && sourceEditor.value) {
+            const currentTiptapHtml = tiptapModule.getEditorHtml(editor);
+            if (sourceEditor.value !== currentTiptapHtml) {
+              tiptapModule.setEditorContent(editor, sourceEditor.value);
+            }
+          }
         }
         sourcePane.style.display = 'none';
         break;
@@ -347,6 +364,7 @@
       await api.writeFile(currentFilePath, htmlContent);
 
       // Also save markdown alongside
+      let mdSaved = false;
       try {
         const md = tiptapModule
           ? tiptapModule.htmlToMarkdown(htmlContent)
@@ -354,9 +372,12 @@
         const mdPath = markdownFilePath || currentFilePath.replace(/\.html?$/i, '.md');
         await api.writeFile(mdPath, md);
         markdownFilePath = mdPath;
-      } catch { /* markdown save is best-effort */ }
+        mdSaved = true;
+      } catch (mdErr) {
+        console.warn('Markdown save failed:', mdErr);
+      }
 
-      setStatus('저장 완료');
+      setStatus(mdSaved ? '저장 완료 (HTML + Markdown)' : '저장 완료 (HTML만, Markdown 변환 실패)');
       document.title = `${currentFilePath.split(/[\\/]/).pop()} - 저장됨`;
     } catch (e) {
       console.error('Save failed:', e);

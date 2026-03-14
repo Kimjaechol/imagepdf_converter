@@ -942,6 +942,14 @@ def _convert_document_sync(
     if img_dir.exists():
         image_paths = [str(p) for p in img_dir.iterdir() if p.is_file()]
 
+    html_file = None
+    md_file = None
+    for f in output_files:
+        if f.endswith(".html") or f.endswith(".htm"):
+            html_file = f
+        elif f.endswith(".md"):
+            md_file = f
+
     return {
         "html": html if want_html else None,
         "markdown": markdown,
@@ -953,6 +961,9 @@ def _convert_document_sync(
         "engine": "hancom",
         "translated": translated,
         "elapsed_seconds": elapsed,
+        "html_file": html_file,
+        "md_file": md_file,
+        "viewer_file": None,
     }
 
 
