@@ -1078,16 +1078,8 @@ async function handlePurchaseCredit() {
     showSettingsStatus("충전 금액을 입력해주세요", "warning");
     return;
   }
-  try {
-    // Try Stripe checkout first
-    const checkout = await api.createCheckout(amount);
-    if (checkout.checkout_url) {
-      window.open(checkout.checkout_url, "_blank");
-      return;
-    }
-  } catch {
-    // Stripe not configured, use manual top-up
-  }
+  // TODO: 결제 기능 활성화 시 Stripe/Toss checkout으로 교체 예정
+  // 현재는 테스트용 수동 크레딧 충전 (결제 없이 바로 추가)
   try {
     const result = await api.purchaseCredits(amount);
     showSettingsStatus(`$${amount.toFixed(2)} (${formatKRW(result.amount_krw)}) 충전 완료. 잔액: $${result.new_balance_usd.toFixed(4)} (${formatKRW(result.new_balance_krw)})`, "success");
