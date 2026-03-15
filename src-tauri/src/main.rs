@@ -32,18 +32,85 @@ fn show_error_msgbox(title: &str, msg: &str) {
     }
 }
 
+/// Simple timestamp without chrono dependency
+fn chrono_simple_now() -> String {
+    use std::time::SystemTime;
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("[timestamp={}]", secs)
+}
+
+/// Determine the best log directory. Falls back to exe directory if AppData is unavailable.
+fn resolve_log_dir() -> std::path::PathBuf {
+    // Primary: AppData\Local\MoA-DocConverter\logs
+    if let Some(local) = dirs_next::data_local_dir() {
+        let dir = local.join("MoA-DocConverter").join("logs");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return dir;
+        }
+    }
+    // Fallback: next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let dir = parent.join("logs");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                return dir;
+            }
+        }
+    }
+    // Last resort: current directory
+    std::path::PathBuf::from(".")
+}
+
+/// Write a simple text file next to the exe to confirm the binary at least starts loading.
+/// Returns a status message for later logging.
+fn write_early_diagnostic() -> String {
+    let exe_path = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return format!("cannot get exe path: {}", e),
+    };
+    let exe_dir = match exe_path.parent() {
+        Some(d) => d,
+        None => return "cannot get exe parent dir".to_string(),
+    };
+    let diag_file = exe_dir.join("moa_diagnostic.txt");
+    let info = format!(
+        "MoA Document Converter - Diagnostic\n\
+         Exe: {:?}\n\
+         Dir: {:?}\n\
+         data_local_dir: {:?}\n\
+         Status: main() entered successfully\n",
+        exe_path,
+        std::env::current_dir().ok(),
+        dirs_next::data_local_dir(),
+    );
+    match std::fs::write(&diag_file, &info) {
+        Ok(_) => format!("wrote {:?}", diag_file),
+        Err(e) => format!("failed to write {:?}: {}", diag_file, e),
+    }
+}
+
 fn main() {
+    // Write an early diagnostic file BEFORE anything else.
+    // If the app crashes before tracing is set up, this file helps diagnose the issue.
+    let early_diag = write_early_diagnostic();
+
     // Catch panics and show message box
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("앱에서 예기치 않은 오류가 발생했습니다:\n\n{}", info);
         show_error_msgbox("MoA 문서 변환기 - 오류", &msg);
+        // Also try to write panic info to diagnostic file
+        if let Ok(exe) = std::env::current_exe() {
+            let panic_file = exe.parent().unwrap_or(std::path::Path::new(".")).join("moa_panic.log");
+            let _ = std::fs::write(&panic_file, format!("{}\n{}", chrono_simple_now(), msg));
+        }
     }));
 
-    // Set up file logging so we can diagnose launch failures
-    let log_dir = dirs_next::data_local_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("MoA-DocConverter")
-        .join("logs");
+    // Set up file logging so we can diagnose launch failures.
+    // Try AppData\Local first, fall back to exe directory.
+    let log_dir = resolve_log_dir();
     let _ = std::fs::create_dir_all(&log_dir);
     let log_file = log_dir.join("app.log");
 
@@ -58,13 +125,16 @@ fn main() {
             .with_ansi(false)
             .init();
     } else {
+        // If log file fails, try stderr
         tracing_subscriber::fmt::init();
     }
 
     tracing::info!("=== App starting ===");
     tracing::info!("Log file: {:?}", log_file);
+    tracing::info!("Early diagnostic: {}", early_diag);
     tracing::info!("Exe path: {:?}", std::env::current_exe());
     tracing::info!("Current dir: {:?}", std::env::current_dir());
+    tracing::info!("data_local_dir: {:?}", dirs_next::data_local_dir());
 
     tauri::Builder::default()
         .manage(AuthToken(Mutex::new(String::new())))

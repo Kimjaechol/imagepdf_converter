@@ -44,11 +44,12 @@ fn find_python(app: &AppHandle) -> PathBuf {
     ];
 
     for candidate in &candidates {
+        let canonical = candidate.canonicalize().unwrap_or_else(|_| candidate.clone());
         if candidate.exists() {
-            tracing::info!("Using Python: {:?}", candidate);
+            tracing::info!("Using Python: {:?} (canonical: {:?})", candidate, canonical);
             return candidate.clone();
         }
-        tracing::debug!("Python not found at: {:?}", candidate);
+        tracing::warn!("Python not found at: {:?} (canonical attempt: {:?})", candidate, canonical);
     }
 
     // Fallback: System Python
@@ -77,7 +78,7 @@ fn find_backend_dir(app: &AppHandle) -> PathBuf {
             tracing::info!("Using backend dir: {:?}", candidate);
             return candidate.clone();
         }
-        tracing::debug!("backend/ not found at: {:?}", candidate);
+        tracing::warn!("backend/ not found at: {:?}", candidate);
     }
 
     // Fallback: current directory
@@ -120,11 +121,23 @@ pub async fn start_backend(app: &AppHandle) -> Result<(), String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let child = cmd
+    let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn Python backend: {}", e))?;
+        .map_err(|e| format!("Failed to spawn Python backend: {} (python={:?}, dir={:?})", e, python, backend_dir))?;
 
     tracing::info!("Backend process started (PID: {:?})", child.id());
+
+    // Spawn a task to capture and log stderr from the Python process
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::info!("[python-stderr] {}", line);
+            }
+        });
+    }
 
     let mut lock = get_process_mutex().lock().await;
     *lock = Some(child);
@@ -161,6 +174,20 @@ async fn wait_for_health(port: u16, max_retries: u32) -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/api/health", port);
     for i in 0..max_retries {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // Check if the process has already exited
+        {
+            let mut lock = get_process_mutex().lock().await;
+            if let Some(child) = lock.as_mut() {
+                if let Ok(Some(status)) = child.try_wait() {
+                    return Err(format!(
+                        "Python backend exited prematurely with status: {}. Check logs for [python-stderr] messages.",
+                        status
+                    ));
+                }
+            }
+        }
+
         if let Ok(resp) = reqwest::get(&url).await {
             if resp.status().is_success() {
                 return Ok(());
@@ -170,5 +197,5 @@ async fn wait_for_health(port: u16, max_retries: u32) -> Result<(), String> {
             tracing::info!("Still waiting for backend... ({}s)", i + 1);
         }
     }
-    Err("Backend health check timed out".to_string())
+    Err("Backend health check timed out after 60s. The Python backend did not respond.".to_string())
 }
