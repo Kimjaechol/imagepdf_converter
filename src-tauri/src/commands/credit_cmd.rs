@@ -1,7 +1,7 @@
-use super::common::{auth_header, backend_url, check_response};
+use super::common::{auth_header, backend_url, check_response, remote_url};
 use tauri::Manager;
 
-// ─── Auth ──────────────────────────────────────────────
+// ─── Auth (→ Railway/Supabase) ──────────────────────────
 
 #[tauri::command]
 pub async fn auth_register(
@@ -11,12 +11,13 @@ pub async fn auth_register(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/auth/register", backend_url()))
+        .post(format!("{}/api/auth/register", remote_url()))
         .json(&serde_json::json!({
             "email": email,
             "password": password,
             "display_name": display_name,
         }))
+        .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -32,11 +33,12 @@ pub async fn auth_register(
 pub async fn auth_login(email: String, password: String) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/auth/login", backend_url()))
+        .post(format!("{}/api/auth/login", remote_url()))
         .json(&serde_json::json!({
             "email": email,
             "password": password,
         }))
+        .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -52,8 +54,9 @@ pub async fn auth_login(email: String, password: String) -> Result<serde_json::V
 pub async fn auth_get_me(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{}/api/auth/me", backend_url()))
+        .get(format!("{}/api/auth/me", remote_url()))
         .header("Authorization", auth_header(&app))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -80,10 +83,11 @@ pub async fn auth_refresh_token(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/auth/refresh", backend_url()))
+        .post(format!("{}/api/auth/refresh", remote_url()))
         .json(&serde_json::json!({
             "refresh_token": refresh_token,
         }))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -105,11 +109,11 @@ pub async fn auth_refresh_token(
     Ok(result)
 }
 
-// ─── API Key Status (read-only, operator sets via Railway env vars) ───
+// ─── API Key Status (→ Railway) ───────────────────────
 
 #[tauri::command]
 pub async fn get_api_key_status() -> Result<serde_json::Value, String> {
-    let resp = reqwest::get(format!("{}/api/settings/api-key/status", backend_url()))
+    let resp = reqwest::get(format!("{}/api/settings/api-key/status", remote_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -122,7 +126,7 @@ pub async fn get_api_key_status() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
-    let resp = reqwest::get(format!("{}/api/settings/upstage-api-key/status", backend_url()))
+    let resp = reqwest::get(format!("{}/api/settings/upstage-api-key/status", remote_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -133,11 +137,11 @@ pub async fn get_upstage_api_key_status() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
-// ─── R2 Upload (Image PDF Hybrid Architecture) ───────
+// ─── R2 Upload (→ Railway) ────────────────────────────
 
 #[tauri::command]
 pub async fn r2_status() -> Result<serde_json::Value, String> {
-    let resp = reqwest::get(format!("{}/api/r2/status", backend_url()))
+    let resp = reqwest::get(format!("{}/api/r2/status", remote_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -156,7 +160,7 @@ pub async fn r2_presigned_upload(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/r2/presigned-upload", backend_url()))
+        .post(format!("{}/api/r2/presigned-upload", remote_url()))
         .header("Authorization", auth_header(&app))
         .json(&serde_json::json!({
             "filename": filename,
@@ -182,7 +186,7 @@ pub async fn parse_image_pdf(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/parse/image-pdf", backend_url()))
+        .post(format!("{}/api/parse/image-pdf", remote_url()))
         .header("Authorization", auth_header(&app))
         .json(&serde_json::json!({
             "object_key": object_key,
@@ -201,7 +205,7 @@ pub async fn parse_image_pdf(
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
-// ─── Local LLM Correction ────────────────────────────
+// ─── Local LLM Correction (→ Local backend) ──────────
 
 #[tauri::command]
 pub async fn correct_with_llm(
@@ -235,11 +239,11 @@ pub async fn correct_with_llm(
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
-// ─── Exchange Rate ────────────────────────────────────
+// ─── Exchange Rate (→ Railway) ────────────────────────
 
 #[tauri::command]
 pub async fn get_exchange_rate() -> Result<serde_json::Value, String> {
-    let resp = reqwest::get(format!("{}/api/exchange-rate", backend_url()))
+    let resp = reqwest::get(format!("{}/api/exchange-rate", remote_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -250,13 +254,13 @@ pub async fn get_exchange_rate() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Parse failed: {}", e))
 }
 
-// ─── Credits (authenticated) ──────────────────────────
+// ─── Credits (→ Railway, authenticated) ───────────────
 
 #[tauri::command]
 pub async fn get_credits(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{}/api/credits", backend_url()))
+        .get(format!("{}/api/credits", remote_url()))
         .header("Authorization", auth_header(&app))
         .send()
         .await
@@ -276,7 +280,7 @@ pub async fn purchase_credits(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/credits/purchase", backend_url()))
+        .post(format!("{}/api/credits/purchase", remote_url()))
         .header("Authorization", auth_header(&app))
         .json(&serde_json::json!({
             "amount_usd": amount_usd,
@@ -299,7 +303,7 @@ pub async fn estimate_cost(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/credits/estimate", backend_url()))
+        .post(format!("{}/api/credits/estimate", remote_url()))
         .json(&serde_json::json!({
             "num_pages": num_pages,
             "doc_type": doc_type,
@@ -317,7 +321,7 @@ pub async fn estimate_cost(
 
 #[tauri::command]
 pub async fn get_pricing() -> Result<serde_json::Value, String> {
-    let resp = reqwest::get(format!("{}/api/credits/pricing", backend_url()))
+    let resp = reqwest::get(format!("{}/api/credits/pricing", remote_url()))
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -332,7 +336,7 @@ pub async fn get_pricing() -> Result<serde_json::Value, String> {
 pub async fn get_credit_history(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{}/api/credits/history", backend_url()))
+        .get(format!("{}/api/credits/history", remote_url()))
         .header("Authorization", auth_header(&app))
         .send()
         .await
@@ -352,7 +356,7 @@ pub async fn create_checkout(
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/api/payments/create-checkout", backend_url()))
+        .post(format!("{}/api/payments/create-checkout", remote_url()))
         .header("Authorization", auth_header(&app))
         .json(&serde_json::json!({
             "amount_usd": amount_usd,
