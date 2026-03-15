@@ -1,8 +1,17 @@
 use crate::backend::process;
 use tauri::Manager;
 
+/// Railway remote backend URL for auth/credits/payments (has Supabase keys).
+pub const REMOTE_BACKEND_URL: &str = "https://imagepdfconverter-production.up.railway.app";
+
+/// Local Python backend URL for document conversion (needs local file access).
 pub fn backend_url() -> String {
     format!("http://127.0.0.1:{}", process::get_port())
+}
+
+/// Remote backend URL for auth, credits, payments, etc.
+pub fn remote_url() -> &'static str {
+    REMOTE_BACKEND_URL
 }
 
 pub fn auth_header(app: &tauri::AppHandle) -> String {

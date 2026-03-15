@@ -38,7 +38,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Restore auth state – validate token before skipping login
   const token = api.getAuthToken();
-  if (token) {
+  if (token && state.backendHealthy) {
     try {
       await api.setAuthToken(token);
       // Verify the token is still valid by calling getMe
@@ -59,6 +59,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       // Refresh also failed – clear stale auth data
       api.clearAuth();
+    }
+  } else if (token && !state.backendHealthy) {
+    // Backend not ready yet – keep local auth state, skip server validation
+    const userInfo = api.getUserInfo();
+    if (userInfo) {
+      hideLoginOverlay();
+      updateAuthUI();
+      return;
     }
   }
   // No valid session – show login overlay
@@ -899,6 +907,23 @@ function showLoginError(msg) {
   if (el) el.textContent = msg;
 }
 
+function formatAuthError(action, error) {
+  const msg = String(error);
+  if (msg.includes("error sending request") || msg.includes("connection refused") || msg.includes("Connection refused")) {
+    return `${action} 실패: 백엔드 서버에 연결할 수 없습니다. 앱을 재시작해 주세요.`;
+  }
+  if (msg.includes("Email already registered") || msg.includes("already registered")) {
+    return "이미 등록된 이메일입니다. 로그인을 시도해 주세요.";
+  }
+  if (msg.includes("Invalid email or password")) {
+    return "이메일 또는 비밀번호가 올바르지 않습니다.";
+  }
+  if (msg.includes("Password must be at least")) {
+    return "비밀번호는 6자 이상이어야 합니다.";
+  }
+  return `${action} 실패: ${msg}`;
+}
+
 async function handleOverlayLogin() {
   const email = $("#login-email")?.value?.trim();
   const password = $("#login-password")?.value;
@@ -911,6 +936,20 @@ async function handleOverlayLogin() {
   if (btn) { btn.disabled = true; btn.textContent = "로그인 중..."; }
 
   try {
+    // Check backend health first; try to restart if down
+    if (!state.backendHealthy) {
+      showLoginError("서버에 연결 중입니다. 잠시만 기다려 주세요...");
+      try {
+        await api.restartBackend();
+        await checkBackendHealth();
+      } catch { /* ignore */ }
+      if (!state.backendHealthy) {
+        showLoginError("서버에 연결할 수 없습니다. 앱을 재시작해 주세요.");
+        return;
+      }
+      showLoginError("");
+    }
+
     const result = await api.login(email, password);
     await api.setAuthToken(result.token);
     // Store refresh token if provided (Supabase)
@@ -921,7 +960,7 @@ async function handleOverlayLogin() {
     hideLoginOverlay();
     updateAuthUI();
   } catch (e) {
-    showLoginError(`로그인 실패: ${e}`);
+    showLoginError(formatAuthError("로그인", e));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "로그인"; }
   }
@@ -944,6 +983,20 @@ async function handleOverlayRegister() {
   if (btn) { btn.disabled = true; btn.textContent = "가입 중..."; }
 
   try {
+    // Check backend health first; try to restart if down
+    if (!state.backendHealthy) {
+      showLoginError("서버에 연결 중입니다. 잠시만 기다려 주세요...");
+      try {
+        await api.restartBackend();
+        await checkBackendHealth();
+      } catch { /* ignore */ }
+      if (!state.backendHealthy) {
+        showLoginError("서버에 연결할 수 없습니다. 앱을 재시작해 주세요.");
+        return;
+      }
+      showLoginError("");
+    }
+
     const result = await api.register(email, password, displayName);
     await api.setAuthToken(result.token);
     if (result.refresh_token) {
@@ -961,7 +1014,7 @@ async function handleOverlayRegister() {
     hideLoginOverlay();
     updateAuthUI();
   } catch (e) {
-    showLoginError(`회원가입 실패: ${e}`);
+    showLoginError(formatAuthError("회원가입", e));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "가입하기"; }
   }
@@ -1007,7 +1060,7 @@ async function handleLogin() {
     showAuthStatus("로그인 성공!", "success");
     updateAuthUI();
   } catch (e) {
-    showAuthStatus(`로그인 실패: ${e}`, "error");
+    showAuthStatus(formatAuthError("로그인", e), "error");
   }
 }
 
@@ -1030,7 +1083,7 @@ async function handleRegister() {
     showAuthStatus("회원가입 성공!", "success");
     updateAuthUI();
   } catch (e) {
-    showAuthStatus(`회원가입 실패: ${e}`, "error");
+    showAuthStatus(formatAuthError("회원가입", e), "error");
   }
 }
 
